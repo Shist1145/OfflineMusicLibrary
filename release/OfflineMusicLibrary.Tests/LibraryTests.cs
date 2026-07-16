@@ -77,19 +77,23 @@ public sealed class LibraryTests
     }
 
     [Fact]
-    public void TrackDestinationWindow_RendersExistingPlaylistWithoutBindingCrash()
+    public void PlaylistWindows_RenderAndOpenImportedPlaylistWithoutLosingContent()
     {
         Exception? failure = null;
+        var dataDirectory = Path.Combine(Path.GetTempPath(), "OfflineMusicLibrary.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dataDirectory);
         using var completed = new ManualResetEventSlim();
         var thread = new Thread(() =>
         {
             App? app = null;
-            TrackDestinationWindow? window = null;
+            TrackDestinationWindow? destinationWindow = null;
+            MainWindow? mainWindow = null;
             try
             {
                 app = new App();
                 app.InitializeComponent();
-                window = new TrackDestinationWindow(
+                app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
+                destinationWindow = new TrackDestinationWindow(
                     [new PlaylistModel
                     {
                         Name = "稳定性测试歌单",
@@ -98,13 +102,66 @@ public sealed class LibraryTests
                     }],
                     selectedTrackCount: 1);
 
-                window.Show();
-                window.UpdateLayout();
-                var list = Assert.IsType<System.Windows.Controls.ListBox>(window.FindName("PlaylistOptionsList"));
+                destinationWindow.Show();
+                destinationWindow.UpdateLayout();
+                var list = Assert.IsType<System.Windows.Controls.ListBox>(destinationWindow.FindName("PlaylistOptionsList"));
                 var container = Assert.IsAssignableFrom<System.Windows.FrameworkElement>(
                     list.ItemContainerGenerator.ContainerFromIndex(0));
                 container.ApplyTemplate();
-                window.UpdateLayout();
+                destinationWindow.UpdateLayout();
+                destinationWindow.Close();
+                destinationWindow = null;
+
+                var track = new TrackModel
+                {
+                    Id = "local-track-1",
+                    FilePath = @"G:\Music\Imported Song.flac",
+                    Title = "Imported Song",
+                    Artist = "Artist"
+                };
+                var previousPlaylist = new PlaylistModel { Name = "之前的空歌单" };
+                var importedPlaylist = new PlaylistModel
+                {
+                    Name = "刚导入的歌单",
+                    Source = "netease",
+                    CloudPlaylistId = "12345",
+                    TrackIds = [track.Id]
+                };
+                var state = new AppState
+                {
+                    Tracks = [track],
+                    Playlists = [previousPlaylist, importedPlaylist],
+                    CloseBehavior = "Exit"
+                };
+
+                mainWindow = new MainWindow(new AppStore(dataDirectory), loadStateOnShow: false)
+                {
+                    ShowActivated = false,
+                    Opacity = 0
+                };
+                SetPrivateField(mainWindow, "_state", state);
+                SetPrivateField(mainWindow, "_initialized", true);
+                mainWindow.Show();
+
+                var playlistList = Assert.IsType<System.Windows.Controls.ListBox>(mainWindow.FindName("PlaylistList"));
+                playlistList.ItemsSource = state.Playlists;
+                playlistList.SelectedItem = previousPlaylist;
+                var searchBox = Assert.IsType<System.Windows.Controls.TextBox>(mainWindow.FindName("SearchBox"));
+                searchBox.Text = "definitely-no-result";
+
+                mainWindow.OpenPlaylist(importedPlaylist, clearSearch: true);
+                mainWindow.UpdateLayout();
+
+                var trackGrid = Assert.IsType<System.Windows.Controls.DataGrid>(mainWindow.FindName("TrackGrid"));
+                var countText = Assert.IsType<System.Windows.Controls.TextBlock>(mainWindow.FindName("TrackCountText"));
+                var titleText = Assert.IsType<System.Windows.Controls.TextBlock>(mainWindow.FindName("PlaylistHeaderTitleText"));
+                var emptyPanel = Assert.IsType<System.Windows.Controls.Border>(mainWindow.FindName("EmptyTrackPanel"));
+                Assert.Same(importedPlaylist, playlistList.SelectedItem);
+                Assert.Equal("", searchBox.Text);
+                Assert.Equal("刚导入的歌单", titleText.Text);
+                Assert.Equal("1 首", countText.Text);
+                Assert.Single(trackGrid.Items);
+                Assert.Equal(System.Windows.Visibility.Collapsed, emptyPanel.Visibility);
             }
             catch (Exception exception)
             {
@@ -112,7 +169,8 @@ public sealed class LibraryTests
             }
             finally
             {
-                try { window?.Close(); } catch { }
+                try { destinationWindow?.Close(); } catch { }
+                try { mainWindow?.Close(); } catch { }
                 try { app?.Shutdown(); } catch { }
                 completed.Set();
             }
@@ -123,8 +181,18 @@ public sealed class LibraryTests
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
 
-        Assert.True(completed.Wait(TimeSpan.FromSeconds(10)), "界面稳定性测试超时。");
-        Assert.Null(failure);
+        try
+        {
+            Assert.True(completed.Wait(TimeSpan.FromSeconds(20)), "界面稳定性测试超时。");
+            Assert.Null(failure);
+        }
+        finally
+        {
+            var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "OfflineMusicLibrary.Tests"));
+            var target = Path.GetFullPath(dataDirectory);
+            if (target.StartsWith(root, StringComparison.OrdinalIgnoreCase) && Directory.Exists(target))
+                Directory.Delete(target, recursive: true);
+        }
     }
 
     [Theory]
@@ -450,6 +518,15 @@ public sealed class LibraryTests
         Album = album,
         PlayCount = playCount
     };
+
+    private static void SetPrivateField(object target, string fieldName, object value)
+    {
+        var field = target.GetType().GetField(
+            fieldName,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field.SetValue(target, value);
+    }
 
     private static void WithTemporaryDirectory(Action<string> action)
     {

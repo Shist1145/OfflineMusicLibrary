@@ -12,7 +12,7 @@ namespace OfflineMusicLibrary;
 
 public partial class MainWindow : Window
 {
-    private readonly AppStore _store = new();
+    private readonly AppStore _store;
     private readonly MusicLibraryService _libraryService = new();
     private readonly NetEasePlaylistService _netEaseService = new();
     private readonly PlaybackService _playback = new();
@@ -67,13 +67,23 @@ public partial class MainWindow : Window
     private string _trackSortKey = "ArtistAlbum";
     private ListSortDirection _trackSortDirection = ListSortDirection.Ascending;
     private bool _syncingSortCombo;
+    private bool _suppressSearchRefresh;
+    private int _unfilteredTrackCount;
 
     private const int AlbumCardBatchSize = 64;
     private const int CircleCardBatchSize = 64;
 
-    public MainWindow()
+    public MainWindow() : this(new AppStore(), loadStateOnShow: true)
     {
+    }
+
+    internal MainWindow(AppStore store, bool loadStateOnShow)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        _store = store;
         InitializeComponent();
+        if (!loadStateOnShow)
+            Loaded -= Window_Loaded;
         VideoView.MediaPlayer = _playback.Player;
         AddHandler(Keyboard.KeyDownEvent, new KeyEventHandler(Window_HandledKeyDown), handledEventsToo: true);
         CategoryList.ItemsSource = _categories;
@@ -299,10 +309,19 @@ public partial class MainWindow : Window
             ApplyCircleFilter();
 
         var selectedId = _currentPlaylist?.Id;
-        PlaylistList.ItemsSource = null;
-        PlaylistList.ItemsSource = _state.Playlists;
-        if (selectedId is not null)
-            PlaylistList.SelectedItem = _state.Playlists.FirstOrDefault(playlist => playlist.Id == selectedId);
+        var wasSuppressingNavigation = _suppressNavigation;
+        _suppressNavigation = true;
+        try
+        {
+            PlaylistList.ItemsSource = null;
+            PlaylistList.ItemsSource = _state.Playlists;
+            if (selectedId is not null)
+                PlaylistList.SelectedItem = _state.Playlists.FirstOrDefault(playlist => playlist.Id == selectedId);
+        }
+        finally
+        {
+            _suppressNavigation = wasSuppressingNavigation;
+        }
         QueuePlaylistCoverLoads();
         UpdatePlaylistHeader();
     }
@@ -493,6 +512,9 @@ public partial class MainWindow : Window
         }
 
         var query = SearchBox.Text.Trim().ToLowerInvariant();
+        var unfilteredTracks = tracks.ToList();
+        _unfilteredTrackCount = unfilteredTracks.Count;
+        tracks = unfilteredTracks;
         if (query.Length > 0)
             tracks = tracks.Where(track => track.SearchText.Contains(query, StringComparison.CurrentCultureIgnoreCase));
 
@@ -501,13 +523,59 @@ public partial class MainWindow : Window
         _visibleTracks = tracks.ToList();
         TrackGrid.ItemsSource = _visibleTracks;
         UpdateTrackSortIndicator();
-        TrackCountText.Text = $"{_visibleTracks.Count:N0} 首";
+        var recordedPlaylistCount = _view == LibraryView.Playlist && _currentPlaylist is not null
+            ? _currentPlaylist.TrackIds.Count
+            : _unfilteredTrackCount;
+        TrackCountText.Text = query.Length > 0
+            ? $"{_visibleTracks.Count:N0} / {_unfilteredTrackCount:N0} 首（搜索筛选）"
+            : recordedPlaylistCount > _unfilteredTrackCount
+                ? $"{_unfilteredTrackCount:N0} 首可用 / {recordedPlaylistCount:N0} 首记录"
+                : $"{_visibleTracks.Count:N0} 首";
         LastPlayedColumn.Visibility = _view == LibraryView.History ? Visibility.Visible : Visibility.Collapsed;
         PlayCountColumn.Visibility = _view == LibraryView.History ? Visibility.Visible : Visibility.Collapsed;
         RemoveFromPlaylistButton.Visibility = _view == LibraryView.Playlist
             ? Visibility.Visible
             : Visibility.Collapsed;
         UpdatePlaylistHeader();
+        UpdateEmptyTrackState();
+    }
+
+    private void UpdateEmptyTrackState()
+    {
+        if (_showingPlayerView || IsAlbumPage || IsCirclePage || _visibleTracks.Count > 0)
+        {
+            EmptyTrackPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var hasSearch = !string.IsNullOrWhiteSpace(SearchBox.Text);
+        EmptyTrackPanel.Visibility = Visibility.Visible;
+        ClearTrackSearchButton.Visibility = hasSearch ? Visibility.Visible : Visibility.Collapsed;
+
+        if (hasSearch && _unfilteredTrackCount > 0)
+        {
+            EmptyTrackTitleText.Text = "当前搜索没有匹配歌曲";
+            EmptyTrackMessageText.Text = $"这个页面原有 {_unfilteredTrackCount:N0} 首歌曲。清除顶部搜索后即可全部显示。";
+            return;
+        }
+
+        if (_view == LibraryView.Playlist && _currentPlaylist is not null)
+        {
+            if (_currentPlaylist.TrackIds.Count > 0)
+            {
+                EmptyTrackTitleText.Text = "歌单歌曲暂时无法对应到曲库";
+                EmptyTrackMessageText.Text = $"歌单记录了 {_currentPlaylist.TrackIds.Count:N0} 首歌曲，但当前曲库没有找到对应文件。请先重新扫描曲库，再重新导入该歌单。";
+            }
+            else
+            {
+                EmptyTrackTitleText.Text = "这个歌单还是空的";
+                EmptyTrackMessageText.Text = "可以从歌曲列表使用“添加到…”把歌曲加入这里。";
+            }
+            return;
+        }
+
+        EmptyTrackTitleText.Text = "没有可显示的歌曲";
+        EmptyTrackMessageText.Text = hasSearch ? "请尝试清除搜索或更换关键词。" : "请添加音乐文件夹并重新扫描曲库。";
     }
 
     private bool IsAlbumPage => _view is LibraryView.Albums or LibraryView.FavoriteAlbums;
@@ -692,6 +760,10 @@ public partial class MainWindow : Window
         CirclePanel.Visibility = circlePage ? Visibility.Visible : Visibility.Collapsed;
         LibraryToolbar.Visibility = albumPage || circlePage ? Visibility.Collapsed : Visibility.Visible;
         TrackGrid.Visibility = albumPage || circlePage ? Visibility.Collapsed : Visibility.Visible;
+        if (albumPage || circlePage)
+            EmptyTrackPanel.Visibility = Visibility.Collapsed;
+        else
+            UpdateEmptyTrackState();
     }
 
     private void SelectLibraryView(LibraryView view, string title)
@@ -847,18 +919,43 @@ public partial class MainWindow : Window
     {
         if (_suppressNavigation || PlaylistList.SelectedItem is not PlaylistModel playlist)
             return;
+        OpenPlaylist(playlist, clearSearch: false);
+    }
+
+    internal void OpenPlaylist(PlaylistModel playlist, bool clearSearch)
+    {
+        var wasSuppressingNavigation = _suppressNavigation;
         _suppressNavigation = true;
-        CategoryList.SelectedItem = null;
-        AlbumList.SelectedItem = null;
-        AlbumGridList.SelectedItem = null;
-        CircleGridList.SelectedItem = null;
-        _suppressNavigation = false;
+        try
+        {
+            CategoryList.SelectedItem = null;
+            AlbumList.SelectedItem = null;
+            AlbumGridList.SelectedItem = null;
+            CircleGridList.SelectedItem = null;
+            PlaylistList.SelectedItem = playlist;
+        }
+        finally
+        {
+            _suppressNavigation = wasSuppressingNavigation;
+        }
         _view = LibraryView.Playlist;
         _currentPlaylist = playlist;
         _currentCategory = null;
         _currentAlbumKey = null;
         _currentCircleKey = null;
         CurrentViewTitle.Text = playlist.Name;
+        if (clearSearch && !string.IsNullOrEmpty(SearchBox.Text))
+        {
+            _suppressSearchRefresh = true;
+            try
+            {
+                SearchBox.Clear();
+            }
+            finally
+            {
+                _suppressSearchRefresh = false;
+            }
+        }
         UpdatePlaylistHeader();
         ApplyFilter();
         ShowPlayerView(false);
@@ -868,12 +965,20 @@ public partial class MainWindow : Window
     {
         if (SearchHint is not null)
             SearchHint.Visibility = string.IsNullOrEmpty(SearchBox.Text) ? Visibility.Visible : Visibility.Collapsed;
+        if (_suppressSearchRefresh)
+            return;
         if (IsAlbumPage)
             ApplyAlbumFilter();
         else if (IsCirclePage)
             ApplyCircleFilter();
         else
             ApplyFilter();
+    }
+
+    private void ClearTrackSearchButton_Click(object sender, RoutedEventArgs e)
+    {
+        SearchBox.Clear();
+        SearchBox.Focus();
     }
     private void AllAlbumsFilterButton_Click(object sender, RoutedEventArgs e) => SelectAlbumPage(showFavoritesOnly: false);
     private void FavoriteAlbumsFilterButton_Click(object sender, RoutedEventArgs e) => SelectAlbumPage(showFavoritesOnly: true);
@@ -1032,7 +1137,7 @@ public partial class MainWindow : Window
         _currentPlaylist = playlist;
         await _store.SaveAsync(_state);
         RefreshNavigation();
-        PlaylistList.SelectedItem = playlist;
+        OpenPlaylist(playlist, clearSearch: true);
         StatusText.Text = $"已创建歌单“{playlist.Name}”";
     }
 
@@ -1061,7 +1166,7 @@ public partial class MainWindow : Window
 
         await _store.SaveAsync(_state);
         RefreshNavigation();
-        PlaylistList.SelectedItem = playlist;
+        OpenPlaylist(playlist, clearSearch: false);
         CurrentViewTitle.Text = playlist.Name;
         UpdatePlaylistHeader();
         StatusText.Text = $"已保存歌单“{playlist.Name}”的资料";
@@ -1368,7 +1473,7 @@ public partial class MainWindow : Window
             playlist.NotifyMetadataChanged();
             await _store.SaveAsync(_state);
             RefreshNavigation();
-            PlaylistList.SelectedItem = playlist;
+            OpenPlaylist(playlist, clearSearch: true);
 
             var missingPreview = string.Join("\n", result.Missing.Take(8).Select(track =>
                 string.IsNullOrWhiteSpace(track.Title)
@@ -2390,6 +2495,7 @@ public partial class MainWindow : Window
             AlbumToolbar.Visibility = Visibility.Collapsed;
             CircleToolbar.Visibility = Visibility.Collapsed;
             TrackGrid.Visibility = Visibility.Collapsed;
+            EmptyTrackPanel.Visibility = Visibility.Collapsed;
             AlbumPanel.Visibility = Visibility.Collapsed;
             CirclePanel.Visibility = Visibility.Collapsed;
         }
