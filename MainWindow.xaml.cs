@@ -1022,8 +1022,11 @@ public partial class MainWindow : Window
     private async void CreatePlaylistButton_Click(object sender, RoutedEventArgs e)
     {
         var playlist = new PlaylistModel { Name = MakeUniquePlaylistName("新歌单") };
-        var dialog = new PlaylistDetailsWindow(playlist, null) { Owner = this };
-        if (dialog.ShowDialog() != true || !ApplyPlaylistDetails(playlist, dialog))
+        if (!TryShowOwnedDialog(
+                () => new PlaylistDetailsWindow(playlist, null),
+                "创建歌单",
+                out var dialog) ||
+            !ApplyPlaylistDetails(playlist, dialog))
             return;
         _state.Playlists.Add(playlist);
         _currentPlaylist = playlist;
@@ -1049,8 +1052,11 @@ public partial class MainWindow : Window
 
     private async Task EditPlaylistAsync(PlaylistModel playlist)
     {
-        var dialog = new PlaylistDetailsWindow(playlist, playlist.CoverThumbnail) { Owner = this };
-        if (dialog.ShowDialog() != true || !ApplyPlaylistDetails(playlist, dialog))
+        if (!TryShowOwnedDialog(
+                () => new PlaylistDetailsWindow(playlist, playlist.CoverThumbnail),
+                "编辑歌单",
+                out var dialog) ||
+            !ApplyPlaylistDetails(playlist, dialog))
             return;
 
         await _store.SaveAsync(_state);
@@ -1132,8 +1138,10 @@ public partial class MainWindow : Window
             return;
 
         var tracks = selected.DistinctBy(track => track.Id, StringComparer.OrdinalIgnoreCase).ToList();
-        var dialog = new TrackDestinationWindow(_state.Playlists, tracks.Count) { Owner = this };
-        if (dialog.ShowDialog() != true)
+        if (!TryShowOwnedDialog(
+                () => new TrackDestinationWindow(_state.Playlists, tracks.Count),
+                "添加歌曲",
+                out var dialog))
             return;
 
         var destinations = dialog.SelectedPlaylistIds
@@ -1837,8 +1845,51 @@ public partial class MainWindow : Window
 
     private string? Prompt(string title, string prompt, string initialValue = "")
     {
-        var window = new TextPromptWindow(title, prompt, initialValue) { Owner = this };
-        return window.ShowDialog() == true ? window.Value : null;
+        return TryShowOwnedDialog(
+            () => new TextPromptWindow(title, prompt, initialValue),
+            title,
+            out var window)
+            ? window.Value
+            : null;
+    }
+
+    private bool TryShowOwnedDialog<TWindow>(
+        Func<TWindow> createDialog,
+        string operationName,
+        out TWindow dialog)
+        where TWindow : Window
+    {
+        dialog = null!;
+        try
+        {
+            dialog = createDialog();
+            dialog.Owner ??= this;
+            return dialog.ShowDialog() == true;
+        }
+        catch (Exception exception) when (!App.IsFatalException(exception))
+        {
+            DiagnosticLog.Write("UI", $"{operationName} dialog failed", exception);
+            StatusText.Text = $"{operationName}暂时无法完成，播放器已保持运行";
+            try
+            {
+                MessageBox.Show(this,
+                    $"“{operationName}”暂时无法完成，但播放器仍可继续使用。\n详细信息已写入日志。",
+                    "操作未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            catch (Exception notificationException)
+            {
+                DiagnosticLog.Write("UI", "Could not display dialog failure notice", notificationException);
+            }
+            return false;
+        }
+    }
+
+    internal void ReportRecoverableUiException()
+    {
+        StatusText.Text = "刚才的界面操作发生异常，播放器已保持运行";
+        MessageBox.Show(this,
+            "刚才的界面操作发生异常，但播放器仍可继续使用。\n详细信息已写入日志。",
+            "操作未完成", MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private string MakeUniquePlaylistName(string requested, string? excludedId = null)
@@ -2771,8 +2822,10 @@ public partial class MainWindow : Window
 
     private async Task ShowSettingsAsync()
     {
-        var dialog = new SettingsWindow(_state) { Owner = this };
-        if (dialog.ShowDialog() != true)
+        if (!TryShowOwnedDialog(
+                () => new SettingsWindow(_state),
+                "打开设置",
+                out var dialog))
             return;
 
         var previousAudioBackend = _state.AudioBackend;

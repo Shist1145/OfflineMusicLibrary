@@ -76,6 +76,57 @@ public sealed class LibraryTests
         });
     }
 
+    [Fact]
+    public void TrackDestinationWindow_RendersExistingPlaylistWithoutBindingCrash()
+    {
+        Exception? failure = null;
+        using var completed = new ManualResetEventSlim();
+        var thread = new Thread(() =>
+        {
+            App? app = null;
+            TrackDestinationWindow? window = null;
+            try
+            {
+                app = new App();
+                app.InitializeComponent();
+                window = new TrackDestinationWindow(
+                    [new PlaylistModel
+                    {
+                        Name = "稳定性测试歌单",
+                        Description = "确保只读摘要可以安全显示",
+                        TrackIds = ["track-1"]
+                    }],
+                    selectedTrackCount: 1);
+
+                window.Show();
+                window.UpdateLayout();
+                var list = Assert.IsType<System.Windows.Controls.ListBox>(window.FindName("PlaylistOptionsList"));
+                var container = Assert.IsAssignableFrom<System.Windows.FrameworkElement>(
+                    list.ItemContainerGenerator.ContainerFromIndex(0));
+                container.ApplyTemplate();
+                window.UpdateLayout();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                try { window?.Close(); } catch { }
+                try { app?.Shutdown(); } catch { }
+                completed.Set();
+            }
+        })
+        {
+            IsBackground = true
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(completed.Wait(TimeSpan.FromSeconds(10)), "界面稳定性测试超时。");
+        Assert.Null(failure);
+    }
+
     [Theory]
     [InlineData("19723756", "19723756")]
     [InlineData("https://music.163.com/playlist?id=19723756", "19723756")]

@@ -6,8 +6,14 @@ namespace OfflineMusicLibrary;
 public static class DiagnosticLog
 {
     private const long MaximumLogBytes = 2 * 1024 * 1024;
-    private static readonly Channel<string> Entries = Channel.CreateUnbounded<string>(
-        new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+    private static readonly Channel<string> Entries = Channel.CreateBounded<string>(
+        new BoundedChannelOptions(2048)
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.DropOldest,
+            AllowSynchronousContinuations = false
+        });
 
     static DiagnosticLog()
     {
