@@ -1,0 +1,180 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OfflineMusicLibrary.MainWindow"
+        x:CompileBindings="False"
+        Title="本地音乐库 1.2"
+        Width="1280" Height="820"
+        MinWidth="980" MinHeight="640"
+        WindowStartupLocation="CenterScreen">
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Background="#15171D" BorderBrush="#292C34" BorderThickness="0,0,0,1" Padding="16,12">
+      <Grid ColumnDefinitions="Auto,Auto,Auto,*,330">
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <Button Classes="accent" Content="＋ 添加音乐文件夹" Click="AddFolderButton_Click" />
+          <Button Classes="ghost" Content="重新扫描" Click="RescanButton_Click" />
+          <Button Classes="ghost" Content="导入网易云歌单" Click="ImportNetEaseButton_Click" />
+        </StackPanel>
+        <TextBlock Grid.Column="3" x:Name="TrackCountText" VerticalAlignment="Center" HorizontalAlignment="Right"
+                   Margin="12,0" Foreground="#A5A9B3" />
+        <TextBox Grid.Column="4" x:Name="SearchBox" PlaceholderText="搜索歌曲、艺术家、专辑、社团…"
+                 Height="38" VerticalContentAlignment="Center" TextChanged="SearchBox_TextChanged" />
+      </Grid>
+    </Border>
+
+    <TabControl Grid.Row="1" x:Name="MainTabs" Margin="12" SelectionChanged="MainTabs_SelectionChanged">
+      <TabItem Header="曲库">
+        <DataGrid x:Name="LibraryGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                  CanUserSortColumns="True" SelectionMode="Extended" DoubleTapped="TrackGrid_DoubleTapped">
+          <DataGrid.Columns>
+            <DataGridTemplateColumn Width="54" Header="">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <Button Classes="ghost" Width="38" Height="36" Padding="0" Content="▶" ToolTip.Tip="播放"
+                          Click="PlayTrackButton_Click" />
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+            <DataGridTextColumn Width="54" Header="#" Binding="{Binding TrackText}" SortMemberPath="TrackNumber" />
+            <DataGridTemplateColumn Width="2.5*" Header="歌曲" SortMemberPath="Title">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <Grid ColumnDefinitions="48,*" Margin="0,4">
+                    <Border Width="42" Height="42" CornerRadius="5" Background="#292C35" ClipToBounds="True">
+                      <Image Source="{Binding Cover}" Stretch="UniformToFill" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding Format}" FontSize="11" Foreground="#8E929D" />
+                    </StackPanel>
+                  </Grid>
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+            <DataGridTemplateColumn Width="64" Header="收藏" SortMemberPath="IsFavorite">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <Button Background="Transparent" Foreground="#FF5A78" FontSize="20" Content="{Binding FavoriteGlyph}"
+                          Click="FavoriteTrackButton_Click" />
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+            <DataGridTextColumn Width="1.4*" Header="艺术家" Binding="{Binding Artist}" SortMemberPath="Artist" />
+            <DataGridTextColumn Width="1.6*" Header="专辑" Binding="{Binding Album}" SortMemberPath="Album" />
+            <DataGridTextColumn Width="1.2*" Header="社团" Binding="{Binding CircleText}" SortMemberPath="Circle" />
+            <DataGridTextColumn Width="1.0*" Header="分类" Binding="{Binding CategoryText}" SortMemberPath="CategoryText" />
+            <DataGridTextColumn Width="76" Header="时长" Binding="{Binding DurationText}" SortMemberPath="DurationMs" />
+          </DataGrid.Columns>
+        </DataGrid>
+      </TabItem>
+
+      <TabItem Header="歌单">
+        <Grid ColumnDefinitions="250,*">
+          <Border Background="#15171D" CornerRadius="8" Padding="8" Margin="0,0,10,0">
+            <ListBox x:Name="PlaylistList" SelectionChanged="PlaylistList_SelectionChanged" />
+          </Border>
+          <DataGrid Grid.Column="1" x:Name="PlaylistGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                    CanUserSortColumns="True" DoubleTapped="TrackGrid_DoubleTapped">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Width="54" Header="">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate><Button Classes="ghost" Width="38" Height="36" Padding="0" Content="▶" Click="PlayTrackButton_Click" /></DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Width="2.5*" Header="歌曲" SortMemberPath="Title">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="48,*" Margin="0,4">
+                      <Border Width="42" Height="42" CornerRadius="5" Background="#292C35" ClipToBounds="True"><Image Source="{Binding Cover}" Stretch="UniformToFill" /></Border>
+                      <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Artist}" FontSize="11" Foreground="#8E929D" TextTrimming="CharacterEllipsis" />
+                      </StackPanel>
+                    </Grid>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Width="1.5*" Header="专辑" Binding="{Binding Album}" SortMemberPath="Album" />
+              <DataGridTextColumn Width="1.2*" Header="社团" Binding="{Binding CircleText}" SortMemberPath="Circle" />
+              <DataGridTextColumn Width="80" Header="时长" Binding="{Binding DurationText}" SortMemberPath="DurationMs" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="专辑">
+        <Grid RowDefinitions="300,*">
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <ListBox x:Name="AlbumList" Background="Transparent" SelectionChanged="AlbumList_SelectionChanged">
+              <ListBox.ItemsPanel>
+                <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+              </ListBox.ItemsPanel>
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Border Width="184" Margin="6" Padding="8" CornerRadius="9" Background="#181A21">
+                    <StackPanel>
+                      <Border Height="150" CornerRadius="7" Background="#292C35" ClipToBounds="True">
+                        <Image Source="{Binding Representative.Cover}" Stretch="UniformToFill" />
+                      </Border>
+                      <TextBlock Margin="0,8,0,0" Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding Artist}" Foreground="#9A9EAA" FontSize="12" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding CountText}" Foreground="#777C88" FontSize="11" />
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </ScrollViewer>
+          <DataGrid Grid.Row="1" x:Name="AlbumTracksGrid" AutoGenerateColumns="False" IsReadOnly="True" DoubleTapped="TrackGrid_DoubleTapped">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Width="54" Header=""><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Classes="ghost" Width="38" Height="36" Padding="0" Content="▶" Click="PlayTrackButton_Click" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+              <DataGridTextColumn Width="54" Header="#" Binding="{Binding TrackText}" SortMemberPath="TrackNumber" />
+              <DataGridTextColumn Width="2*" Header="歌曲" Binding="{Binding Title}" SortMemberPath="Title" />
+              <DataGridTextColumn Width="1.3*" Header="艺术家" Binding="{Binding Artist}" SortMemberPath="Artist" />
+              <DataGridTextColumn Width="1.2*" Header="社团" Binding="{Binding CircleText}" SortMemberPath="Circle" />
+              <DataGridTextColumn Width="80" Header="时长" Binding="{Binding DurationText}" SortMemberPath="DurationMs" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="社团">
+        <Grid ColumnDefinitions="260,*">
+          <Border Background="#15171D" CornerRadius="8" Padding="8" Margin="0,0,10,0">
+            <ListBox x:Name="CircleList" SelectionChanged="CircleList_SelectionChanged">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <Grid ColumnDefinitions="*,Auto" Margin="4,6">
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                    <TextBlock Grid.Column="1" Text="{Binding CountText}" Foreground="#898E99" />
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Border>
+          <DataGrid Grid.Column="1" x:Name="CircleTracksGrid" AutoGenerateColumns="False" IsReadOnly="True" DoubleTapped="TrackGrid_DoubleTapped">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Width="54" Header=""><DataGridTemplateColumn.CellTemplate><DataTemplate><Button Classes="ghost" Width="38" Height="36" Padding="0" Content="▶" Click="PlayTrackButton_Click" /></DataTemplate></DataGridTemplateColumn.CellTemplate></DataGridTemplateColumn>
+              <DataGridTextColumn Width="2*" Header="歌曲" Binding="{Binding Title}" SortMemberPath="Title" />
+              <DataGridTextColumn Width="1.3*" Header="艺术家" Binding="{Binding Artist}" SortMemberPath="Artist" />
+              <DataGridTextColumn Width="1.5*" Header="专辑" Binding="{Binding Album}" SortMemberPath="Album" />
+              <DataGridTextColumn Width="80" Header="时长" Binding="{Binding DurationText}" SortMemberPath="DurationMs" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </Grid>
+      </TabItem>
+    </TabControl>
+
+    <Border Grid.Row="2" Background="#171920" BorderBrush="#2A2D35" BorderThickness="0,1,0,0" Padding="16,12">
+      <Grid ColumnDefinitions="280,Auto,Auto,Auto,*,90,150" RowDefinitions="Auto,Auto">
+        <TextBlock x:Name="NowPlayingText" FontWeight="SemiBold" Text="尚未播放" TextTrimming="CharacterEllipsis" />
+        <Button Grid.Column="1" Classes="ghost" Content="⏮" Margin="8,0" Click="PreviousButton_Click" />
+        <Button Grid.Column="2" Classes="accent" x:Name="PlayPauseButton" Content="▶ / 暂停" Click="PlayPauseButton_Click" />
+        <Button Grid.Column="3" Classes="ghost" Content="⏭" Margin="8,0" Click="NextButton_Click" />
+        <Slider Grid.Column="4" x:Name="PositionSlider" Minimum="0" Maximum="1" Value="0" VerticalAlignment="Center" PointerReleased="PositionSlider_PointerReleased" />
+        <TextBlock Grid.Column="5" x:Name="PositionText" Text="0:00 / 0:00" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="#A0A4AF" />
+        <Slider Grid.Column="6" x:Name="VolumeSlider" Minimum="0" Maximum="100" Value="76" VerticalAlignment="Center" ValueChanged="VolumeSlider_ValueChanged" />
+        <TextBlock Grid.Row="1" Grid.ColumnSpan="7" x:Name="StatusText" Margin="0,7,0,0" Foreground="#8E929D" Text="准备就绪" TextTrimming="CharacterEllipsis" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

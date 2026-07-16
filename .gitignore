@@ -1,0 +1,42 @@
+# .NET and IDE output
+[Bb]in/
+[Oo]bj/
+.vs/
+.idea/
+TestResults/
+*.user
+*.suo
+*.pdb
+*.log
+*.tmp
+
+# Local publish output and packaged releases
+artifacts/
+dist/
+release/*
+!release/OfflineMusicLibrary.Tests/
+!release/OfflineMusicLibrary.Tests/OfflineMusicLibrary.Tests.csproj
+!release/OfflineMusicLibrary.Tests/LibraryTests.cs
+*.zip
+*.tar.gz
+
+# User library state and local media
+library.json
+library-cross-platform.json
+*.mp3
+*.flac
+*.m4a
+*.ogg
+*.opus
+*.wav
+*.wma
+*.aac
+*.ape
+*.ncm
+*.mp4
+*.mkv
+*.webm
+
+# OS files
+Thumbs.db
+.DS_Store

@@ -1,0 +1,46 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <AssemblyName>OfflineMusicLibrary</AssemblyName>
+    <Product>本地音乐库</Product>
+    <Description>离线音乐管理、播放、歌单、封面与双语歌词工具</Description>
+    <Version>1.2</Version>
+    <FileVersion>1.2.0.0</FileVersion>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <Authors>Local Library User</Authors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WPF remains the default UI namespace; WinForms is referenced explicitly for
+         the tray icon and native color dialog only. -->
+    <Using Remove="System.Drawing" />
+    <Using Remove="System.Windows.Forms" />
+    <Resource Include="app.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="release\**\*.cs" />
+    <Compile Remove="CrossPlatform\**\*.cs" />
+    <Page Remove="release\**\*.xaml" />
+    <Page Remove="CrossPlatform\**\*.xaml" />
+    <None Remove="release\**" />
+    <None Remove="CrossPlatform\**" />
+    <Content Remove="release\**" />
+    <Content Remove="CrossPlatform\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibVLCSharp" Version="3.10.0" />
+    <PackageReference Include="LibVLCSharp.WPF" Version="3.10.0" />
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.23.1" />
+  </ItemGroup>
+
+</Project>

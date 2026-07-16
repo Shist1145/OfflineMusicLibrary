@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=本地音乐库
+Comment=离线音乐管理、播放、歌单、专辑与社团工具
+Exec=OfflineMusicLibrary
+Icon=multimedia-player
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+

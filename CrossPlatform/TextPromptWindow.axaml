@@ -1,0 +1,18 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OfflineMusicLibrary.TextPromptWindow"
+        x:CompileBindings="False"
+        Width="560" Height="210"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Title="输入">
+  <Grid Margin="22" RowDefinitions="Auto,Auto,*,Auto">
+    <TextBlock x:Name="PromptText" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" />
+    <TextBox x:Name="ValueBox" Grid.Row="1" Margin="0,14,0,0" Height="38" VerticalContentAlignment="Center" />
+    <TextBlock x:Name="HintText" Grid.Row="2" Margin="0,9,0,0" Foreground="#9EA2AE" TextWrapping="Wrap" />
+    <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+      <Button Classes="ghost" Content="取消" Click="CancelButton_Click" />
+      <Button Classes="accent" Content="确定" Click="OkButton_Click" />
+    </StackPanel>
+  </Grid>
+</Window>

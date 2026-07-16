@@ -1,0 +1,739 @@
+<Window x:Class="OfflineMusicLibrary.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
+        xmlns:local="clr-namespace:OfflineMusicLibrary"
+        Title="本地音乐库" Width="1440" Height="880" MinWidth="1120" MinHeight="700"
+        WindowStartupLocation="CenterScreen" Loaded="Window_Loaded" Closing="Window_Closing"
+        PreviewKeyDown="Window_PreviewKeyDown">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="64" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="94" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="White" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,0,1">
+            <Grid Margin="20,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="260" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="34" Height="34" CornerRadius="6" Background="{StaticResource AccentBrush}">
+                        <TextBlock Text="♪" Foreground="White" FontSize="21" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="本地音乐库" FontSize="18" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+
+                <Grid Grid.Column="1" Width="430" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBox x:Name="SearchBox" Height="38" Padding="36,7,10,7" TextChanged="SearchBox_TextChanged"
+                             ToolTip="搜索歌曲、社团、艺术家、专辑、分类或文件名" />
+                    <TextBlock x:Name="SearchHint" Text="搜索歌曲、社团、艺术家、专辑、分类…"
+                               Foreground="#8A9691" Margin="38,0,10,0" VerticalAlignment="Center"
+                               IsHitTestVisible="False" />
+                    <TextBlock Text="⌕" FontSize="20" Foreground="{StaticResource MutedTextBrush}"
+                               Margin="12,0,0,0" HorizontalAlignment="Left" VerticalAlignment="Center" IsHitTestVisible="False" />
+                </Grid>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="OpenMediaButton" Content="＋ 打开媒体" Margin="0,0,8,0" Click="OpenMediaButton_Click"
+                            ToolTip="打开单个音频或视频文件，不必先加入曲库" />
+                    <Button x:Name="AddFolderButton" Content="＋ 音乐文件夹" Margin="0,0,8,0" Click="AddFolderButton_Click" />
+                    <Button x:Name="RescanButton" Content="↻ 重新扫描" Margin="0,0,8,0" Click="RescanButton_Click" />
+                    <Button Content="⚙" Style="{StaticResource IconButtonStyle}" ToolTip="设置" Margin="0,0,8,0"
+                            Click="SettingsButton_Click" />
+                    <Button x:Name="ImportNetEaseButton" Content="导入网易云歌单" Style="{StaticResource AccentButtonStyle}" Click="ImportNetEaseButton_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="330" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" Background="{StaticResource SidebarBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,1,0">
+                <Grid Margin="12,16,12,12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="22" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="32" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Text="资料库" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="10,0,0,6" />
+                    <StackPanel Grid.Row="1">
+                        <Button Content="♫  全部音乐" Style="{StaticResource NavButtonStyle}" Click="AllMusicButton_Click" />
+                        <Button Content="♥  我的收藏" Style="{StaticResource NavButtonStyle}" Click="FavoritesButton_Click" />
+                        <Button Content="▦  专辑" Style="{StaticResource NavButtonStyle}" Click="AlbumsButton_Click" />
+                        <Button Content="♡  收藏专辑" Style="{StaticResource NavButtonStyle}" Click="FavoriteAlbumsButton_Click" />
+                        <Button Content="♬  社团" Style="{StaticResource NavButtonStyle}" Click="CirclesButton_Click" />
+                        <Button Content="◷  最近添加" Style="{StaticResource NavButtonStyle}" Click="RecentButton_Click" />
+                        <Button Content="↶  播放历史" Style="{StaticResource NavButtonStyle}" Click="HistoryButton_Click" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="3" Margin="0,8,0,4">
+                        <TextBlock Text="分类" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="10,0" VerticalAlignment="Center" />
+                    </Grid>
+                    <ListBox x:Name="CategoryList" Grid.Row="4" Background="Transparent" BorderThickness="0"
+                             SelectionChanged="CategoryList_SelectionChanged" />
+
+                    <Grid Grid.Row="5" Margin="0,6,0,4">
+                        <TextBlock Text="专辑" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="10,0" VerticalAlignment="Center" />
+                    </Grid>
+                    <ListBox x:Name="AlbumList" Grid.Row="6" Background="Transparent" BorderThickness="0"
+                             SelectionChanged="AlbumList_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Grid.Row="1" Text="{Binding CountText}" Foreground="{StaticResource MutedTextBrush}"
+                                               FontSize="11" Margin="0,2,0,0" />
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <Grid Grid.Row="7" Margin="0,6,0,2">
+                        <TextBlock Text="歌单" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="10,0" VerticalAlignment="Center" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Content="＋" Style="{StaticResource IconButtonStyle}" Width="28" Height="28" FontSize="15"
+                                    ToolTip="新建歌单" Click="CreatePlaylistButton_Click" />
+                            <Button Content="✎" Style="{StaticResource IconButtonStyle}" Width="28" Height="28" FontSize="14" Margin="3,0,0,0"
+                                    ToolTip="编辑歌单封面、名称、标签和简介" Click="RenamePlaylistButton_Click" />
+                            <Button Content="×" Style="{StaticResource IconButtonStyle}" Width="28" Height="28" FontSize="17" Margin="3,0,0,0"
+                                    ToolTip="删除歌单" Click="DeletePlaylistButton_Click" />
+                        </StackPanel>
+                    </Grid>
+                    <ListBox x:Name="PlaylistList" Grid.Row="8" Background="Transparent" BorderThickness="0"
+                             SelectionChanged="PlaylistList_SelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="42" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid Width="34" Height="34" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                        <Border Background="#DDE6E2" CornerRadius="4">
+                                            <TextBlock Text="♫" FontSize="15" Foreground="#8A9A94"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <Border CornerRadius="4" ClipToBounds="True">
+                                            <Image Source="{Binding CoverThumbnail}" Stretch="UniformToFill" />
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding CountText}" Foreground="{StaticResource MutedTextBrush}"
+                                                   FontSize="10.5" Margin="0,2,0,0" />
+                                    </StackPanel>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Column="1" Background="White">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="46" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="18,0" MinHeight="58">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <Grid>
+                        <StackPanel x:Name="StandardHeaderPanel" VerticalAlignment="Center">
+                            <TextBlock x:Name="CurrentViewTitle" Text="全部音乐" FontSize="19" FontWeight="SemiBold" />
+                            <TextBlock x:Name="StatusText" Text="正在准备曲库…" Foreground="{StaticResource MutedTextBrush}" FontSize="12" Margin="0,2,0,0" />
+                        </StackPanel>
+
+                        <Grid x:Name="PlaylistHeaderPanel" Visibility="Collapsed" Margin="0,12,18,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="96" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid Width="84" Height="84" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                <Border Background="#E3E9E6" CornerRadius="7">
+                                    <TextBlock Text="♫" FontSize="30" Foreground="#9AA9A3"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Border>
+                                <Border CornerRadius="7" ClipToBounds="True">
+                                    <Image x:Name="PlaylistHeaderCoverImage" Stretch="UniformToFill" />
+                                </Border>
+                            </Grid>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock x:Name="PlaylistHeaderTitleText" FontSize="21" FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    <Button Content="✎ 编辑资料" Padding="9,4" Margin="10,0,0,0"
+                                            Click="EditPlaylistButton_Click" />
+                                    <Button Content="▶ 播放全部" Padding="9,4" Margin="7,0,0,0"
+                                            Click="PlaylistPlayAllButton_Click" />
+                                </StackPanel>
+                                <TextBlock x:Name="PlaylistHeaderDescriptionText" Foreground="{StaticResource MutedTextBrush}"
+                                           TextTrimming="CharacterEllipsis" Margin="0,5,0,0" />
+                                <TextBlock x:Name="PlaylistHeaderTagsText" Foreground="{StaticResource AccentBrush}"
+                                           FontSize="11" TextTrimming="CharacterEllipsis" Margin="0,4,0,0" />
+                                <TextBlock x:Name="PlaylistHeaderMetaText" Foreground="{StaticResource MutedTextBrush}"
+                                           FontSize="10.5" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
+                                <TextBlock Text="{Binding Text, ElementName=StatusText}" Foreground="{StaticResource MutedTextBrush}"
+                                           FontSize="10.5" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1" CornerRadius="5" Margin="0,0,14,0">
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="LibraryViewButton" Content="曲库" Padding="12,5" BorderThickness="0"
+                                        Click="LibraryViewButton_Click" ToolTip="显示媒体资料库" />
+                                <Button x:Name="PlayerViewButton" Content="播放器" Padding="12,5" BorderThickness="1,0,0,0"
+                                        Click="PlayerViewButton_Click" ToolTip="显示视频画面或音频可视化" />
+                            </StackPanel>
+                        </Border>
+                        <TextBlock x:Name="TrackCountText" VerticalAlignment="Center" Foreground="{StaticResource MutedTextBrush}" />
+                    </StackPanel>
+                </Grid>
+
+                <Border x:Name="LibraryToolbar" Grid.Row="1" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,1">
+                    <Grid Margin="12,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Content="添加到…" Padding="10,5" Margin="0,0,6,0" Click="AddToPlaylistButton_Click"
+                                    ToolTip="加入一个或多个歌单、下一首或播放队列" />
+                            <Button Content="添加分类" Padding="10,5" Margin="0,0,6,0" Click="AddCategoryButton_Click" />
+                            <Button Content="移除分类" Padding="10,5" Margin="0,0,6,0" Click="RemoveCategoryButton_Click" />
+                            <Button Content="切换歌曲收藏" Padding="10,5" Margin="0,0,6,0" Click="ToggleFavoriteButton_Click" />
+                            <Button Content="切换专辑收藏" Padding="10,5" Margin="0,0,6,0" Click="ToggleAlbumFavoriteButton_Click" />
+                            <Button x:Name="RemoveFromPlaylistButton" Content="移出歌单" Padding="10,5" Visibility="Collapsed"
+                                    Click="RemoveFromPlaylistButton_Click" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                            <TextBlock Text="排序" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" Margin="0,0,7,0" />
+                            <ComboBox x:Name="SortCombo" Width="138" SelectedIndex="0" SelectionChanged="SortCombo_SelectionChanged">
+                                <ComboBoxItem Content="艺术家 / 专辑" Tag="ArtistAlbum" />
+                                <ComboBoxItem Content="歌曲名称" Tag="Title" />
+                                <ComboBoxItem Content="最近添加" Tag="AddedAt" />
+                                <ComboBoxItem Content="最近播放" Tag="LastPlayedAt" />
+                                <ComboBoxItem Content="播放次数" Tag="PlayCount" />
+                                <ComboBoxItem Content="曲目编号" Tag="TrackNumber" />
+                                <ComboBoxItem Content="收藏状态" Tag="IsFavorite" />
+                                <ComboBoxItem Content="艺术家" Tag="Artist" />
+                                <ComboBoxItem Content="专辑" Tag="Album" />
+                                <ComboBoxItem Content="社团" Tag="CircleText" />
+                                <ComboBoxItem Content="分类" Tag="CategoryText" />
+                                <ComboBoxItem Content="时长" Tag="DurationMs" />
+                                <ComboBoxItem Content="格式" Tag="Format" />
+                            </ComboBox>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <Border x:Name="AlbumToolbar" Grid.Row="1" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,1"
+                        Visibility="Collapsed">
+                    <Grid Margin="12,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="AllAlbumsFilterButton" Content="全部专辑" Padding="14,5" Margin="0,0,8,0"
+                                    Click="AllAlbumsFilterButton_Click" />
+                            <Button x:Name="FavoriteAlbumsFilterButton" Content="收藏专辑" Padding="14,5" Margin="0,0,8,0"
+                                    Click="FavoriteAlbumsFilterButton_Click" />
+                        </StackPanel>
+                        <TextBlock Text="使用顶部搜索框过滤专辑" Foreground="{StaticResource MutedTextBrush}"
+                                   HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Grid x:Name="AlbumPanel" Grid.Row="2" Visibility="Collapsed" Background="White">
+                    <ListBox x:Name="AlbumGridList" Background="Transparent" BorderThickness="0"
+                             SelectionChanged="AlbumGridList_SelectionChanged"
+                             ScrollViewer.ScrollChanged="AlbumGridList_ScrollChanged"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel IsItemsHost="True" Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Margin" Value="8" />
+                                <Setter Property="Width" Value="214" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Width="214">
+                                    <StackPanel.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="◎  查看专辑" Click="AlbumContextOpen_Click" />
+                                            <MenuItem Header="▶  播放整张专辑" Click="AlbumContextPlay_Click" />
+                                            <MenuItem Header="≡  下一首播放整张专辑" Click="AlbumContextPlayNext_Click" />
+                                            <Separator />
+                                            <MenuItem Header="♡  切换专辑收藏" Click="AlbumContextFavorite_Click" />
+                                            <MenuItem Header="✎  设置整张专辑社团" Click="AlbumContextSetCircle_Click" />
+                                            <MenuItem Header="↗  分享（复制专辑文件）" Click="AlbumContextShare_Click" />
+                                            <MenuItem Header="＋  添加全部到…" Click="AlbumContextAddPlaylist_Click" />
+                                            <Separator />
+                                            <MenuItem Header="▣  复制专辑信息" Click="AlbumContextCopy_Click" />
+                                            <MenuItem Header="▱  打开文件所在目录" Click="AlbumContextOpenFolder_Click" />
+                                        </ContextMenu>
+                                    </StackPanel.ContextMenu>
+                                    <Grid Width="204" Height="204" HorizontalAlignment="Left">
+                                        <Border Background="#E3E9E6" CornerRadius="8">
+                                            <TextBlock Text="♫" FontSize="54" Foreground="#9AA9A3"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <Border CornerRadius="8" ClipToBounds="True">
+                                            <Image Source="{Binding CoverThumbnail}" Stretch="UniformToFill" />
+                                        </Border>
+                                        <Button Content="{Binding FavoriteGlyph}" ToolTip="{Binding FavoriteToolTip}"
+                                                Style="{StaticResource IconButtonStyle}" Width="32" Height="32" FontSize="15"
+                                                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0"
+                                                Foreground="{StaticResource WarmBrush}" Background="#EFFFFFFF"
+                                                Click="FavoriteAlbumCardButton_Click" />
+                                    </Grid>
+                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="14"
+                                               TextTrimming="CharacterEllipsis" Margin="0,9,0,0" />
+                                    <TextBlock Text="{Binding Artist}" Foreground="{StaticResource MutedTextBrush}"
+                                               FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
+                                    <TextBlock Text="{Binding CountText}" Foreground="{StaticResource MutedTextBrush}"
+                                               FontSize="11" Margin="0,3,0,0" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+
+                <Border x:Name="CircleToolbar" Grid.Row="1" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,1"
+                        Visibility="Collapsed">
+                    <Grid Margin="12,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="全部社团" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
+                            <Button Content="↻ 重新读取标签" Padding="10,5" Click="ReidentifyCirclesButton_Click"
+                                    ToolTip="重新扫描音乐标签中的分组、社团与专辑艺术家" />
+                        </StackPanel>
+                        <TextBlock x:Name="CircleHintText" Text="根据分组与专辑艺术家识别；未识别歌曲可在右键菜单中设置"
+                                   Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+                    </Grid>
+                </Border>
+
+                <Grid x:Name="CirclePanel" Grid.Row="2" Visibility="Collapsed" Background="White">
+                    <ListBox x:Name="CircleGridList" Background="Transparent" BorderThickness="0"
+                             SelectionChanged="CircleGridList_SelectionChanged"
+                             ScrollViewer.ScrollChanged="CircleGridList_ScrollChanged"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel IsItemsHost="True" Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="Margin" Value="8" />
+                                <Setter Property="Width" Value="214" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Width="214">
+                                    <StackPanel.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="◎  查看社团歌曲" Click="CircleContextOpen_Click" />
+                                            <MenuItem Header="▶  播放社团全部歌曲" Click="CircleContextPlay_Click" />
+                                            <MenuItem Header="≡  下一首播放全部歌曲" Click="CircleContextPlayNext_Click" />
+                                            <Separator />
+                                            <MenuItem Header="＋  添加全部到…" Click="CircleContextAddPlaylist_Click" />
+                                            <MenuItem Header="↗  分享（复制社团歌曲）" Click="CircleContextShare_Click" />
+                                            <MenuItem Header="▣  复制社团名称" Click="CircleContextCopy_Click" />
+                                            <MenuItem Header="▱  打开文件所在目录" Click="CircleContextOpenFolder_Click" />
+                                        </ContextMenu>
+                                    </StackPanel.ContextMenu>
+                                    <Grid Width="204" Height="204" HorizontalAlignment="Left">
+                                        <Border Background="#E3E9E6" CornerRadius="8">
+                                            <TextBlock Text="♬" FontSize="54" Foreground="#9AA9A3"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <Border CornerRadius="8" ClipToBounds="True">
+                                            <Image Source="{Binding CoverThumbnail}" Stretch="UniformToFill" />
+                                        </Border>
+                                    </Grid>
+                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14"
+                                               TextTrimming="CharacterEllipsis" Margin="0,9,0,0" />
+                                    <TextBlock Text="{Binding CountText}" Foreground="{StaticResource MutedTextBrush}"
+                                               FontSize="12" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+
+                <DataGrid x:Name="TrackGrid" Grid.Row="2" AutoGenerateColumns="False" MouseDoubleClick="TrackGrid_MouseDoubleClick"
+                          SelectionChanged="TrackGrid_SelectionChanged" PreviewMouseRightButtonDown="TrackGrid_PreviewMouseRightButtonDown"
+                          Sorting="TrackGrid_Sorting" CanUserSortColumns="True" RowHeight="72">
+                    <DataGrid.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="▶  播放" Click="TrackContextPlay_Click" />
+                            <MenuItem Header="≡  下一首播放" Click="TrackContextPlayNext_Click" />
+                            <Separator />
+                            <MenuItem Header="♡  切换收藏" Click="TrackContextFavorite_Click" />
+                            <MenuItem Header="↗  分享（复制歌曲文件）" Click="TrackContextShare_Click" />
+                            <MenuItem Header="＋  添加到…" Click="TrackContextAddPlaylist_Click" />
+                            <MenuItem Header="☷  追加到播放队列" Click="TrackContextAppendQueue_Click" />
+                            <MenuItem Header="⊕  添加分类" Click="TrackContextAddCategory_Click" />
+                            <Separator />
+                            <MenuItem Header="◎  查看专辑" Click="TrackContextOpenAlbum_Click" />
+                            <MenuItem Header="♬  查看社团" Click="TrackContextOpenCircle_Click" />
+                            <MenuItem Header="✎  设置/修正社团" Click="TrackContextSetCircle_Click" />
+                            <MenuItem Header="×  清除社团" Click="TrackContextClearCircle_Click" />
+                            <Separator />
+                            <MenuItem Header="▣  复制歌曲信息" Click="TrackContextCopyInfo_Click" />
+                            <MenuItem Header="⌁  复制文件路径" Click="TrackContextCopyPath_Click" />
+                            <MenuItem Header="▱  打开文件所在目录" Click="TrackContextOpenFolder_Click" />
+                            <MenuItem Header="−  从当前歌单移除" Click="TrackContextRemovePlaylist_Click" />
+                        </ContextMenu>
+                    </DataGrid.ContextMenu>
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="" Width="42" CanUserSort="False">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Content="▶" Style="{StaticResource IconButtonStyle}" Width="30" Height="30" FontSize="13"
+                                            ToolTip="播放这首歌" Click="PlayTrackButton_Click" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="" Width="42" CanUserSort="False">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Content="＋" Style="{StaticResource IconButtonStyle}" Width="30" Height="30" FontSize="16"
+                                            ToolTip="添加到歌单、下一首或播放队列" Click="AddTrackDestinationButton_Click" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="#" Binding="{Binding TrackText}" SortMemberPath="TrackNumber" Width="45" />
+                        <DataGridTemplateColumn Header="歌曲" SortMemberPath="Title" Width="2*" MinWidth="170">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="10,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="62" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid Width="52" Height="52" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                            <Border Background="#E3E9E6" CornerRadius="4">
+                                                <TextBlock Text="♫" FontSize="24" Foreground="#9AA9A3"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </Border>
+                                            <Border CornerRadius="4" ClipToBounds="True">
+                                                <Image Source="{Binding CoverThumbnail}" Stretch="UniformToFill" />
+                                            </Border>
+                                        </Grid>
+                                        <TextBlock Grid.Column="1" Text="{Binding Title}" VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="收藏" SortMemberPath="IsFavorite" Width="54">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Content="{Binding FavoriteGlyph}" ToolTip="{Binding FavoriteToolTip}"
+                                            Style="{StaticResource IconButtonStyle}" Width="30" Height="30" FontSize="15"
+                                            Foreground="{StaticResource WarmBrush}" Click="FavoriteTrackButton_Click" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Header="艺术家" Binding="{Binding Artist}" SortMemberPath="Artist" Width="1.35*" MinWidth="120" />
+                        <DataGridTextColumn Header="专辑" Binding="{Binding Album}" SortMemberPath="Album" Width="1.55*" MinWidth="130" />
+                        <DataGridTextColumn Header="社团" Binding="{Binding CircleText}" SortMemberPath="CircleText" Width="1.1*" MinWidth="105" />
+                        <DataGridTextColumn Header="分类" Binding="{Binding CategoryText}" SortMemberPath="CategoryText" Width="105" />
+                        <DataGridTextColumn Header="时长" Binding="{Binding DurationText}" SortMemberPath="DurationMs" Width="70" />
+                        <DataGridTextColumn Header="格式" Binding="{Binding Format}" SortMemberPath="Format" Width="60" />
+                        <DataGridTextColumn x:Name="LastPlayedColumn" Header="最近播放" Binding="{Binding LastPlayedText}"
+                                            SortMemberPath="LastPlayedAt" Width="128" Visibility="Collapsed" />
+                        <DataGridTextColumn x:Name="PlayCountColumn" Header="播放次数" Binding="{Binding PlayCountText}"
+                                            SortMemberPath="PlayCount" Width="82" Visibility="Collapsed" />
+                    </DataGrid.Columns>
+                </DataGrid>
+
+                <Grid x:Name="PlayerPanel" Grid.Row="1" Grid.RowSpan="2" Visibility="Collapsed" Background="#090B0A">
+                    <vlc:VideoView x:Name="VideoView">
+                        <Grid Background="Transparent">
+                            <Border VerticalAlignment="Top" Background="#A80A0D0B" Padding="12,8">
+                                <Grid>
+                                    <TextBlock x:Name="PlayerMediaSummaryText" Text="播放器等待媒体" Foreground="White"
+                                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <TextBlock Text="可视化" Foreground="#D7E0DC" VerticalAlignment="Center" Margin="0,0,7,0" />
+                                        <ComboBox x:Name="VisualizationCombo" Width="112" Height="30" SelectionChanged="VisualizationCombo_SelectionChanged"
+                                                  ToolTip="音频可视化模式；更改后从当前位置重新载入当前音频">
+                                            <ComboBoxItem Content="关闭" Tag="Off" />
+                                            <ComboBoxItem Content="频谱" Tag="Spectrum" />
+                                            <ComboBoxItem Content="频谱仪" Tag="Spectrometer" />
+                                            <ComboBoxItem Content="波形" Tag="Scope" />
+                                        </ComboBox>
+                                        <Button Content="▣" Style="{StaticResource IconButtonStyle}" Margin="8,0,0,0"
+                                                ToolTip="截取当前视频画面" Click="SnapshotButton_Click" />
+                                    </StackPanel>
+                                </Grid>
+                            </Border>
+
+                            <StackPanel x:Name="InPlayerSubtitlePanel" VerticalAlignment="Bottom" HorizontalAlignment="Center"
+                                        Margin="46,0,46,38" Width="900" MaxWidth="900" IsHitTestVisible="False">
+                                <local:OutlinedTextBlock x:Name="InPlayerOriginalText" Foreground="White" Stroke="Black"
+                                           StrokeThickness="2" FontSize="25" FontWeight="SemiBold" TextAlignment="Center"
+                                           TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
+                                <local:OutlinedTextBlock x:Name="InPlayerTranslationText" Foreground="#AEE8D0" Stroke="Black"
+                                           StrokeThickness="1.6" FontSize="17" TextAlignment="Center" TextWrapping="Wrap"
+                                           TextTrimming="CharacterEllipsis" Margin="0,5,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </vlc:VideoView>
+                </Grid>
+            </Grid>
+
+            <Border Grid.Column="2" Background="#F8FAF9" BorderBrush="{StaticResource LineBrush}" BorderThickness="1,0,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="292" />
+                        <RowDefinition Height="60" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <Grid Width="256" Height="256" Margin="0,18" VerticalAlignment="Top">
+                        <Border x:Name="CoverFallback" Background="#E3E9E6" CornerRadius="6">
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="♫" FontSize="50" Foreground="#9AA9A3" HorizontalAlignment="Center" />
+                                <TextBlock Text="暂无封面" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" Margin="0,7,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Border CornerRadius="6" ClipToBounds="True">
+                            <Image x:Name="CoverImage" Stretch="UniformToFill" />
+                        </Border>
+                    </Grid>
+
+                    <StackPanel Grid.Row="1" Margin="18,0">
+                        <TextBlock x:Name="NowTitleText" Text="尚未播放" FontSize="17" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" />
+                        <TextBlock x:Name="NowArtistText" Text="从曲库中双击歌曲开始播放" Foreground="{StaticResource MutedTextBrush}"
+                                   TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                    </StackPanel>
+
+                    <TabControl Grid.Row="2" Background="Transparent" BorderThickness="0" Margin="8,0,8,8">
+                        <TabItem Header="歌词">
+                            <ListBox x:Name="LyricsList" Background="Transparent" BorderThickness="0"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" Cursor="Hand"
+                                     PreviewMouseLeftButtonUp="LyricsList_PreviewMouseLeftButtonUp"
+                                     ToolTip="单击任意一行跳转到对应时间">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="2,5">
+                                            <TextBlock Text="{Binding Original}" TextWrapping="Wrap" TextAlignment="Center" FontSize="14">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="{StaticResource MutedTextBrush}" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsCurrent}" Value="True">
+                                                                <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding Translation}" TextWrapping="Wrap" TextAlignment="Center" FontSize="12"
+                                                       Foreground="{StaticResource MutedTextBrush}" Margin="0,3,0,0" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </TabItem>
+                        <TabItem Header="信息">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Margin="12,10">
+                                    <TextBlock Text="歌曲" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <TextBlock x:Name="InfoTitleText" Text="-" TextWrapping="Wrap" Margin="0,2,0,12" />
+                                    <TextBlock Text="艺术家" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <TextBlock x:Name="InfoArtistText" Text="-" TextWrapping="Wrap" Margin="0,2,0,12" />
+                                    <TextBlock Text="专辑" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <TextBlock x:Name="InfoAlbumText" Text="-" TextWrapping="Wrap" Margin="0,2,0,12" />
+                                    <TextBlock Text="分类" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <TextBlock x:Name="InfoCategoryText" Text="-" TextWrapping="Wrap" Margin="0,2,0,12" />
+                                    <TextBlock Text="文件" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <TextBlock x:Name="InfoPathText" Text="-" TextWrapping="Wrap" Margin="0,2,0,10" />
+                                    <Button Content="在文件夹中显示" HorizontalAlignment="Left" Click="OpenCurrentFolderButton_Click" />
+                                </StackPanel>
+                            </ScrollViewer>
+                        </TabItem>
+                        <TabItem Header="媒体">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <StackPanel Margin="12,10">
+                                    <TextBlock Text="技术信息" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <TextBlock x:Name="MediaInfoText" Text="未载入媒体"
+                                               TextWrapping="Wrap" Margin="0,3,0,13" />
+
+                                    <TextBlock Text="播放速度" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <ComboBox x:Name="PlaybackRateCombo" Margin="0,3,0,11" SelectionChanged="PlaybackRateCombo_SelectionChanged">
+                                        <ComboBoxItem Content="0.50×" Tag="0.5" />
+                                        <ComboBoxItem Content="0.75×" Tag="0.75" />
+                                        <ComboBoxItem Content="1.00×" Tag="1" />
+                                        <ComboBoxItem Content="1.25×" Tag="1.25" />
+                                        <ComboBoxItem Content="1.50×" Tag="1.5" />
+                                        <ComboBoxItem Content="2.00×" Tag="2" />
+                                    </ComboBox>
+
+                                    <TextBlock Text="音轨" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <ComboBox x:Name="AudioTrackCombo" Margin="0,3,0,11" SelectionChanged="AudioTrackCombo_SelectionChanged" />
+                                    <TextBlock Text="视频轨" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <ComboBox x:Name="VideoTrackCombo" Margin="0,3,0,11" SelectionChanged="VideoTrackCombo_SelectionChanged" />
+                                    <TextBlock Text="字幕轨" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <ComboBox x:Name="SubtitleTrackCombo" Margin="0,3,0,11" SelectionChanged="SubtitleTrackCombo_SelectionChanged" />
+                                    <TextBlock Text="音频输出" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <ComboBox x:Name="AudioDeviceCombo" Margin="0,3,0,11" SelectionChanged="AudioDeviceCombo_SelectionChanged" />
+
+                                    <TextBlock Text="字幕延迟" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,3,0,12">
+                                        <Slider x:Name="SubtitleDelaySlider" Width="210" Minimum="-5" Maximum="5" Value="0"
+                                                TickFrequency="0.25" IsSnapToTickEnabled="True"
+                                                ValueChanged="SubtitleDelaySlider_ValueChanged" />
+                                        <TextBlock x:Name="SubtitleDelayText" Width="58" Margin="8,0,0,0" VerticalAlignment="Center" Text="0.00 s" />
+                                    </StackPanel>
+                                    <Button Content="截取当前视频画面" HorizontalAlignment="Left" Click="SnapshotButton_Click" />
+                                </StackPanel>
+                            </ScrollViewer>
+                        </TabItem>
+                        <TabItem Header="队列">
+                            <ListBox x:Name="QueueList" Background="Transparent" BorderThickness="0" MouseDoubleClick="QueueList_MouseDoubleClick">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="50" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <Grid Width="42" Height="42" HorizontalAlignment="Left">
+                                                <Border Background="#E3E9E6" CornerRadius="4">
+                                                    <TextBlock Text="♫" FontSize="18" Foreground="#9AA9A3"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <Border CornerRadius="4" ClipToBounds="True">
+                                                    <Image Source="{Binding CoverThumbnail}" Stretch="UniformToFill" />
+                                                </Border>
+                                            </Grid>
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Artist}" Foreground="{StaticResource MutedTextBrush}"
+                                                           FontSize="11" TextTrimming="CharacterEllipsis" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </TabItem>
+                    </TabControl>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="2" Background="White" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0">
+            <Grid Margin="18,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="300" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="250" />
+                </Grid.ColumnDefinitions>
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="58" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid Width="54" Height="54" VerticalAlignment="Center">
+                        <Border x:Name="MiniCoverFallback" Background="#E3E9E6" CornerRadius="5">
+                            <TextBlock Text="♫" FontSize="24" Foreground="#9AA9A3" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <Border CornerRadius="5" ClipToBounds="True">
+                            <Image x:Name="MiniCoverImage" Stretch="UniformToFill" />
+                        </Border>
+                    </Grid>
+                    <StackPanel Grid.Column="1" Margin="10,0,8,0" VerticalAlignment="Center">
+                        <TextBlock x:Name="BottomTitleText" Text="未选择歌曲" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="BottomArtistText" Text="-" Foreground="{StaticResource MutedTextBrush}" FontSize="12"
+                                   Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Grid>
+
+                <Grid Grid.Column="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="40" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button x:Name="ShuffleButton" Content="⇄" Style="{StaticResource IconButtonStyle}" ToolTip="随机播放"
+                                Margin="0,0,8,0" Click="ShuffleButton_Click">
+                            <Button.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="关闭随机（按队列顺序）" Tag="Off" Click="ShuffleModeMenuItem_Click" />
+                                    <MenuItem Header="均匀随机（每首概率相同）" Tag="Uniform" Click="ShuffleModeMenuItem_Click" />
+                                    <MenuItem Header="智能随机（避开近期、同艺术家和同专辑）" Tag="Smart" Click="ShuffleModeMenuItem_Click" />
+                                    <MenuItem Header="随机专辑（先随机专辑，再选其中曲目）" Tag="Album" Click="ShuffleModeMenuItem_Click" />
+                                    <MenuItem Header="随机艺术家（先随机艺术家，再选其曲目）" Tag="Artist" Click="ShuffleModeMenuItem_Click" />
+                                    <MenuItem Header="优先未听（优先播放次数较少的媒体）" Tag="LeastPlayed" Click="ShuffleModeMenuItem_Click" />
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
+                        <Button Content="◀|" Style="{StaticResource IconButtonStyle}" ToolTip="上一首 (Ctrl + Left)" Margin="0,0,8,0" Click="PreviousButton_Click" />
+                        <Button x:Name="PlayPauseButton" Content="▶" Style="{StaticResource IconButtonStyle}" ToolTip="播放 / 暂停 (Ctrl + P)"
+                                Width="42" Height="42" Background="{StaticResource AccentBrush}" Foreground="White"
+                                BorderBrush="{StaticResource AccentBrush}" FontSize="18" Click="PlayPauseButton_Click" />
+                        <Button Content="|▶" Style="{StaticResource IconButtonStyle}" ToolTip="下一首 (Ctrl + Right)" Margin="8,0,8,0" Click="NextButton_Click" />
+                        <Button x:Name="RepeatButton" Content="↻" Style="{StaticResource IconButtonStyle}" ToolTip="循环模式" Click="RepeatButton_Click" />
+                    </StackPanel>
+                    <Grid Grid.Row="1" VerticalAlignment="Center">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="46" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="46" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="ElapsedText" Text="0:00" Foreground="{StaticResource MutedTextBrush}" FontSize="11" VerticalAlignment="Center" />
+                        <Slider x:Name="PositionSlider" Grid.Column="1" Minimum="0" Maximum="1" Margin="4,0"
+                                IsMoveToPointEnabled="True" ToolTip="单击时间轴跳转；拖动可精确定位"
+                                PreviewMouseLeftButtonDown="PositionSlider_PreviewMouseLeftButtonDown"
+                                PreviewMouseLeftButtonUp="PositionSlider_PreviewMouseLeftButtonUp"
+                                ValueChanged="PositionSlider_ValueChanged" />
+                        <TextBlock x:Name="DurationText" Grid.Column="2" Text="0:00" Foreground="{StaticResource MutedTextBrush}"
+                                   FontSize="11" TextAlignment="Right" VerticalAlignment="Center" />
+                    </Grid>
+                </Grid>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <TextBlock Text="音量" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                    <Slider x:Name="VolumeSlider" Width="90" Minimum="0" Maximum="100" Margin="8,0,14,0" ValueChanged="VolumeSlider_ValueChanged" />
+                    <CheckBox x:Name="DesktopLyricsCheckBox" Content="桌面歌词" VerticalAlignment="Center"
+                              ToolTip="打开 / 关闭桌面歌词 (Ctrl + D)"
+                              Checked="DesktopLyricsCheckBox_Changed" Unchecked="DesktopLyricsCheckBox_Changed" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

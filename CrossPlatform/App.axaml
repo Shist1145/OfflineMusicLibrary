@@ -1,0 +1,32 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="OfflineMusicLibrary.App"
+             RequestedThemeVariant="Dark">
+  <Application.Styles>
+    <FluentTheme />
+    <Style Selector="Window">
+      <Setter Property="FontFamily" Value="Inter, Noto Sans CJK SC, Noto Sans, Segoe UI, sans-serif" />
+      <Setter Property="Background" Value="#101116" />
+      <Setter Property="Foreground" Value="#F3F4F7" />
+    </Style>
+    <Style Selector="Button.accent">
+      <Setter Property="Background" Value="#E83E68" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="14,8" />
+    </Style>
+    <Style Selector="Button.ghost">
+      <Setter Property="Background" Value="#20222A" />
+      <Setter Property="CornerRadius" Value="8" />
+      <Setter Property="Padding" Value="12,7" />
+    </Style>
+    <Style Selector="DataGrid">
+      <Setter Property="Background" Value="#101116" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="GridLinesVisibility" Value="Horizontal" />
+      <Setter Property="HorizontalGridLinesBrush" Value="#24262E" />
+      <Setter Property="RowBackground" Value="#101116" />
+      <Setter Property="RowHeight" Value="58" />
+    </Style>
+  </Application.Styles>
+</Application>

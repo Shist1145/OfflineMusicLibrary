@@ -1,0 +1,15 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OfflineMusicLibrary.MessageWindow"
+        x:CompileBindings="False"
+        Width="620" MinHeight="230" MaxHeight="680"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Title="提示">
+  <Grid Margin="22" RowDefinitions="*,Auto">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+      <TextBlock x:Name="MessageText" FontSize="15" LineHeight="23" TextWrapping="Wrap" />
+    </ScrollViewer>
+    <Button Grid.Row="1" Classes="accent" Content="确定" HorizontalAlignment="Right" Margin="0,18,0,0" Click="OkButton_Click" />
+  </Grid>
+</Window>

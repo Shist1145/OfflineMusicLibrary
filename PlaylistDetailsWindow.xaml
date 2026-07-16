@@ -1,0 +1,83 @@
+<Window x:Class="OfflineMusicLibrary.PlaylistDetailsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="歌单资料" Width="650" Height="590" ResizeMode="CanMinimize"
+        ShowInTaskbar="False" WindowStartupLocation="CenterOwner">
+    <Grid Margin="24,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="编辑歌单资料" FontSize="21" FontWeight="SemiBold" />
+
+        <Grid Grid.Row="1" Margin="0,18,0,18">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="142" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid Width="128" Height="128" HorizontalAlignment="Left">
+                <Border Background="#E3E9E6" CornerRadius="8">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="♫" FontSize="34" Foreground="#9AA9A3" HorizontalAlignment="Center" />
+                        <TextBlock Text="自动封面" FontSize="11" Foreground="{StaticResource MutedTextBrush}"
+                                   HorizontalAlignment="Center" Margin="0,4,0,0" />
+                    </StackPanel>
+                </Border>
+                <Border CornerRadius="8" ClipToBounds="True">
+                    <Image x:Name="CoverPreviewImage" Stretch="UniformToFill" />
+                </Border>
+            </Grid>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="歌单封面" FontWeight="SemiBold" />
+                <TextBlock Text="未指定时会自动使用歌单内第一张可用的歌曲封面。图片会复制到应用资料目录。"
+                           Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" Margin="0,5,0,12" />
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="选择图片…" Click="ChooseCoverButton_Click" />
+                    <Button Content="恢复自动封面" Margin="9,0,0,0" Click="UseAutomaticCoverButton_Click" />
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+
+        <TextBlock Grid.Row="2" Text="名称" FontWeight="SemiBold" />
+        <TextBox x:Name="NameTextBox" Grid.Row="3" Height="38" Margin="0,7,0,14" />
+
+        <Grid Grid.Row="4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="18" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="标签" FontWeight="SemiBold" />
+                <TextBox x:Name="TagsTextBox" Height="38" Margin="0,7,0,0"
+                         ToolTip="多个标签用逗号分隔，例如：工作、东方、无损" />
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <TextBlock Text="资料" FontWeight="SemiBold" />
+                <TextBlock x:Name="MetadataText" Foreground="{StaticResource MutedTextBrush}"
+                           Margin="0,9,0,0" TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="5" Margin="0,16,0,0">
+            <TextBlock Text="简介" FontWeight="SemiBold" />
+            <TextBox x:Name="DescriptionTextBox" Height="108" Margin="0,7,0,0" AcceptsReturn="True"
+                     VerticalContentAlignment="Top" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" />
+        </StackPanel>
+
+        <Grid Grid.Row="6" Margin="0,18,0,0">
+            <TextBlock x:Name="ValidationText" Foreground="{StaticResource WarmBrush}" VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="取消" Width="82" Margin="0,0,9,0" IsCancel="True" />
+                <Button Content="保存" Width="90" Style="{StaticResource AccentButtonStyle}" IsDefault="True"
+                        Click="SaveButton_Click" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
