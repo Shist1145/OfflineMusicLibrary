@@ -92,5 +92,5 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: gh release create "$GITHUB_REF_NAME" artifacts/* --title "本地音乐库 1.2" --generate-notes
-
