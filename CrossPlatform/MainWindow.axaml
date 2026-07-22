@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="OfflineMusicLibrary.MainWindow"
         x:CompileBindings="False"
-        Title="本地音乐库 1.2"
+        Title="本地音乐库 1.4"
         Width="1280" Height="820"
         MinWidth="980" MinHeight="640"
         WindowStartupLocation="CenterScreen">
@@ -13,6 +13,7 @@
           <Button Classes="accent" Content="＋ 添加音乐文件夹" Click="AddFolderButton_Click" />
           <Button Classes="ghost" Content="重新扫描" Click="RescanButton_Click" />
           <Button Classes="ghost" Content="导入网易云歌单" Click="ImportNetEaseButton_Click" />
+          <Button Classes="ghost" Content="导入播放历史" ToolTip.Tip="导入网易云 JSON / CSV 播放历史" Click="ImportNetEaseHistoryButton_Click" />
         </StackPanel>
         <TextBlock Grid.Column="3" x:Name="TrackCountText" VerticalAlignment="Center" HorizontalAlignment="Right"
                    Margin="12,0" Foreground="#A5A9B3" />
@@ -157,6 +158,45 @@
               <DataGridTextColumn Width="2*" Header="歌曲" Binding="{Binding Title}" SortMemberPath="Title" />
               <DataGridTextColumn Width="1.3*" Header="艺术家" Binding="{Binding Artist}" SortMemberPath="Artist" />
               <DataGridTextColumn Width="1.5*" Header="专辑" Binding="{Binding Album}" SortMemberPath="Album" />
+              <DataGridTextColumn Width="80" Header="时长" Binding="{Binding DurationText}" SortMemberPath="DurationMs" />
+            </DataGrid.Columns>
+          </DataGrid>
+        </Grid>
+      </TabItem>
+
+      <TabItem Header="安心发现">
+        <Grid RowDefinitions="Auto,Auto,*" Margin="8">
+          <Border Background="#171A22" BorderBrush="#303541" BorderThickness="1" CornerRadius="10" Padding="18,14">
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel>
+                <TextBlock FontSize="20" FontWeight="SemiBold" Text="陌生歌曲必须给得出理由" />
+                <TextBlock x:Name="RecommendationTasteText" Margin="0,5,0,0" Foreground="#9BA1AE"
+                           Text="正在读取本地收藏与播放记录…" TextWrapping="Wrap" />
+              </StackPanel>
+              <Button Grid.Column="1" Classes="ghost" Content="↻ 换一批" Click="RefreshRecommendationButton_Click" />
+            </Grid>
+          </Border>
+          <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="10" Margin="0,12">
+            <Button Classes="accent" Content="很久没听" Tag="RediscoverFavorites" Click="RecommendationPresetButton_Click" />
+            <Button Classes="ghost" Content="从未播放" Tag="UnplayedGems" Click="RecommendationPresetButton_Click" />
+            <Button Classes="ghost" Content="收藏延伸" Tag="FavoriteExpansion" Click="RecommendationPresetButton_Click" />
+            <Button Classes="ghost" Content="30 分钟电台" Tag="ThirtyMinuteRadio" Click="RecommendationPresetButton_Click" />
+            <Button Classes="ghost" Content="▶ 播放整组" Click="PlayRecommendationButton_Click" />
+            <TextBlock x:Name="RecommendationInsightText" VerticalAlignment="Center" Margin="10,0,0,0"
+                       Foreground="#9BA1AE" TextTrimming="CharacterEllipsis" />
+          </StackPanel>
+          <DataGrid Grid.Row="2" x:Name="RecommendationGrid" AutoGenerateColumns="False" IsReadOnly="True"
+                    CanUserSortColumns="True" DoubleTapped="TrackGrid_DoubleTapped">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Width="54" Header="">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate><Button Classes="ghost" Width="38" Height="36" Padding="0" Content="▶" Click="PlayTrackButton_Click" /></DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTextColumn Width="2.2*" Header="歌曲" Binding="{Binding Title}" SortMemberPath="Title" />
+              <DataGridTextColumn Width="1.3*" Header="艺术家" Binding="{Binding Artist}" SortMemberPath="Artist" />
+              <DataGridTextColumn Width="1.5*" Header="专辑" Binding="{Binding Album}" SortMemberPath="Album" />
+              <DataGridTextColumn Width="2.2*" Header="为什么推荐" Binding="{Binding RecommendationReason}" />
               <DataGridTextColumn Width="80" Header="时长" Binding="{Binding DurationText}" SortMemberPath="DurationMs" />
             </DataGrid.Columns>
           </DataGrid>

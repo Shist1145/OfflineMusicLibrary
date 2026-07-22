@@ -9,6 +9,7 @@ public sealed class TrackModel : INotifyPropertyChanged
 {
     private bool _isFavorite;
     private Bitmap? _cover;
+    private string _recommendationReason = "";
 
     public string Id { get; set; } = "";
     public string FilePath { get; set; } = "";
@@ -63,6 +64,19 @@ public sealed class TrackModel : INotifyPropertyChanged
 
     [JsonIgnore]
     public string FavoriteGlyph => IsFavorite ? "♥" : "♡";
+
+    [JsonIgnore]
+    public string RecommendationReason
+    {
+        get => _recommendationReason;
+        set
+        {
+            if (string.Equals(_recommendationReason, value, StringComparison.Ordinal))
+                return;
+            _recommendationReason = value;
+            OnPropertyChanged();
+        }
+    }
 
     [JsonIgnore]
     public string DurationText => TimeSpan.FromMilliseconds(DurationMs)
