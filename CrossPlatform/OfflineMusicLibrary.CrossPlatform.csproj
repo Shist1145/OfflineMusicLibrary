@@ -8,9 +8,9 @@
     <RootNamespace>OfflineMusicLibrary</RootNamespace>
     <Product>本地音乐库</Product>
     <Description>跨平台离线音乐管理、播放、歌单、专辑与社团工具</Description>
-    <Version>1.2</Version>
-    <FileVersion>1.2.0.0</FileVersion>
-    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <Version>1.4.0</Version>
+    <FileVersion>1.4.0.0</FileVersion>
+    <AssemblyVersion>1.4.0.0</AssemblyVersion>
     <ApplicationManifest Condition="$([MSBuild]::IsOSPlatform('Windows'))">app.manifest</ApplicationManifest>
     <RuntimeIdentifiers>win-x64;linux-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
   </PropertyGroup>
@@ -33,6 +33,7 @@
 
   <ItemGroup>
     <Compile Include="..\NetEasePlaylistService.cs" Link="Shared\NetEasePlaylistService.cs" />
+    <Compile Include="..\NetEaseHistoryImportService.cs" Link="Shared\NetEaseHistoryImportService.cs" />
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 </Project>
