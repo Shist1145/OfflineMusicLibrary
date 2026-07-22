@@ -477,6 +477,18 @@
                     </DataGrid.Columns>
                 </DataGrid>
 
+                <Border x:Name="EmptyTrackPanel" Grid.Row="2" Margin="0,38,0,0" Background="White"
+                        Visibility="Collapsed">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520">
+                        <TextBlock x:Name="EmptyTrackTitleText" Text="没有可显示的歌曲" FontSize="18"
+                                   FontWeight="SemiBold" HorizontalAlignment="Center" />
+                        <TextBlock x:Name="EmptyTrackMessageText" Foreground="{StaticResource MutedTextBrush}"
+                                   TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0" />
+                        <Button x:Name="ClearTrackSearchButton" Content="清除搜索" Margin="0,16,0,0"
+                                HorizontalAlignment="Center" Click="ClearTrackSearchButton_Click" />
+                    </StackPanel>
+                </Border>
+
                 <Grid x:Name="PlayerPanel" Grid.Row="1" Grid.RowSpan="2" Visibility="Collapsed" Background="#090B0A">
                     <vlc:VideoView x:Name="VideoView">
                         <Grid Background="Transparent">

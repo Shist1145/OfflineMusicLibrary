@@ -76,6 +76,125 @@ public sealed class LibraryTests
         });
     }
 
+    [Fact]
+    public void PlaylistWindows_RenderAndOpenImportedPlaylistWithoutLosingContent()
+    {
+        Exception? failure = null;
+        var dataDirectory = Path.Combine(Path.GetTempPath(), "OfflineMusicLibrary.Tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dataDirectory);
+        using var completed = new ManualResetEventSlim();
+        var thread = new Thread(() =>
+        {
+            App? app = null;
+            TrackDestinationWindow? destinationWindow = null;
+            MainWindow? mainWindow = null;
+            try
+            {
+                app = new App();
+                app.InitializeComponent();
+                app.ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown;
+                destinationWindow = new TrackDestinationWindow(
+                    [new PlaylistModel
+                    {
+                        Name = "稳定性测试歌单",
+                        Description = "确保只读摘要可以安全显示",
+                        TrackIds = ["track-1"]
+                    }],
+                    selectedTrackCount: 1);
+
+                destinationWindow.Show();
+                destinationWindow.UpdateLayout();
+                var list = Assert.IsType<System.Windows.Controls.ListBox>(destinationWindow.FindName("PlaylistOptionsList"));
+                var container = Assert.IsAssignableFrom<System.Windows.FrameworkElement>(
+                    list.ItemContainerGenerator.ContainerFromIndex(0));
+                container.ApplyTemplate();
+                destinationWindow.UpdateLayout();
+                destinationWindow.Close();
+                destinationWindow = null;
+
+                var track = new TrackModel
+                {
+                    Id = "local-track-1",
+                    FilePath = @"G:\Music\Imported Song.flac",
+                    Title = "Imported Song",
+                    Artist = "Artist"
+                };
+                var previousPlaylist = new PlaylistModel { Name = "之前的空歌单" };
+                var importedPlaylist = new PlaylistModel
+                {
+                    Name = "刚导入的歌单",
+                    Source = "netease",
+                    CloudPlaylistId = "12345",
+                    TrackIds = [track.Id]
+                };
+                var state = new AppState
+                {
+                    Tracks = [track],
+                    Playlists = [previousPlaylist, importedPlaylist],
+                    CloseBehavior = "Exit"
+                };
+
+                mainWindow = new MainWindow(new AppStore(dataDirectory), loadStateOnShow: false)
+                {
+                    ShowActivated = false,
+                    Opacity = 0
+                };
+                SetPrivateField(mainWindow, "_state", state);
+                SetPrivateField(mainWindow, "_initialized", true);
+                mainWindow.Show();
+
+                var playlistList = Assert.IsType<System.Windows.Controls.ListBox>(mainWindow.FindName("PlaylistList"));
+                playlistList.ItemsSource = state.Playlists;
+                playlistList.SelectedItem = previousPlaylist;
+                var searchBox = Assert.IsType<System.Windows.Controls.TextBox>(mainWindow.FindName("SearchBox"));
+                searchBox.Text = "definitely-no-result";
+
+                mainWindow.OpenPlaylist(importedPlaylist, clearSearch: true);
+                mainWindow.UpdateLayout();
+
+                var trackGrid = Assert.IsType<System.Windows.Controls.DataGrid>(mainWindow.FindName("TrackGrid"));
+                var countText = Assert.IsType<System.Windows.Controls.TextBlock>(mainWindow.FindName("TrackCountText"));
+                var titleText = Assert.IsType<System.Windows.Controls.TextBlock>(mainWindow.FindName("PlaylistHeaderTitleText"));
+                var emptyPanel = Assert.IsType<System.Windows.Controls.Border>(mainWindow.FindName("EmptyTrackPanel"));
+                Assert.Same(importedPlaylist, playlistList.SelectedItem);
+                Assert.Equal("", searchBox.Text);
+                Assert.Equal("刚导入的歌单", titleText.Text);
+                Assert.Equal("1 首", countText.Text);
+                Assert.Single(trackGrid.Items);
+                Assert.Equal(System.Windows.Visibility.Collapsed, emptyPanel.Visibility);
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                try { destinationWindow?.Close(); } catch { }
+                try { mainWindow?.Close(); } catch { }
+                try { app?.Shutdown(); } catch { }
+                completed.Set();
+            }
+        })
+        {
+            IsBackground = true
+        };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        try
+        {
+            Assert.True(completed.Wait(TimeSpan.FromSeconds(20)), "界面稳定性测试超时。");
+            Assert.Null(failure);
+        }
+        finally
+        {
+            var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "OfflineMusicLibrary.Tests"));
+            var target = Path.GetFullPath(dataDirectory);
+            if (target.StartsWith(root, StringComparison.OrdinalIgnoreCase) && Directory.Exists(target))
+                Directory.Delete(target, recursive: true);
+        }
+    }
+
     [Theory]
     [InlineData("19723756", "19723756")]
     [InlineData("https://music.163.com/playlist?id=19723756", "19723756")]
@@ -399,6 +518,15 @@ public sealed class LibraryTests
         Album = album,
         PlayCount = playCount
     };
+
+    private static void SetPrivateField(object target, string fieldName, object value)
+    {
+        var field = target.GetType().GetField(
+            fieldName,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field.SetValue(target, value);
+    }
 
     private static void WithTemporaryDirectory(Action<string> action)
     {

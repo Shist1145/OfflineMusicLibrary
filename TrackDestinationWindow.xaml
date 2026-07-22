@@ -76,7 +76,7 @@
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Playlist.Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                         <TextBlock Foreground="{StaticResource MutedTextBrush}" FontSize="11" TextTrimming="CharacterEllipsis">
-                                            <Run Text="{Binding Playlist.CountText}" /><Run Text="  ·  " /><Run Text="{Binding Playlist.DescriptionPreview}" />
+                                            <Run Text="{Binding Playlist.CountText, Mode=OneWay}" /><Run Text="  ·  " /><Run Text="{Binding Playlist.DescriptionPreview, Mode=OneWay}" />
                                         </TextBlock>
                                     </StackPanel>
                                 </Grid>
