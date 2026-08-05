@@ -1,61 +1,52 @@
-# 本地音乐库 1.4.0
+# 本地音乐库 1.6.1 / OfflineMusicLibrary 1.6.1
 
-一个以本地文件为准的离线音乐管理与播放工具。Windows 使用完整 WPF 界面；macOS 与 Linux 使用 Avalonia 跨平台界面。当前发行版为 **1.4.0**。
+一个以本地文件为准的离线音乐管理与播放工具：音乐、曲库索引、播放记录、歌词样式与设置都留在本机。
 
-## 主要功能
+**1.6.1 是 Windows x64 完整版。** 原有 Linux 与 macOS 跨平台预览版仍可从 [v1.4.0](https://github.com/Shist1145/OfflineMusicLibrary/releases/tag/v1.4.0) 下载；它们暂不包含本页列出的全部 Windows 新功能。
 
-- 递归扫描音乐文件夹，支持 MP3、FLAC、M4A、OGG、OPUS、WAV、WMA、AAC、APE、NCM 及常见视频容器。
-- 即使标签损坏或读取失败，也按文件名收录支持的媒体文件；NCM 会进入曲库，但加密文件仍需转换后才能播放。
-- 网易云歌单导入会先取得完整 `trackIds`，再分批补齐歌曲详情，不再只依赖接口中被截断的少量 `tracks`。
-- 网易云播放历史可从 JSON、CSV 或 TSV 离线导入；累计次数和最近播放时间会立即参与个性化推荐。
-- 本地匹配先使用网易云歌曲 ID，再使用经过 Unicode、特殊符号、feat. 与艺术家信息归一化的标题匹配，并在导入报告中列出真实缺失项。
-- 单击播放、收藏、独立专辑页、专辑收藏、社团分类、搜索、封面显示和可点击表头排序。
-- 歌曲可通过统一的“添加到…”界面同时加入多个歌单、安排下一首或追加播放队列；歌曲行和右键菜单都可直接操作。
-- 歌单支持自定义或自动封面、简介、标签、来源与更新时间；侧栏、歌单详情页和播放队列均显示封面。
-- 播放历史按最近播放时间展示，并显示每首歌曲的累计播放次数，数据完全保存在本机。
-- “很久没听”“从未播放”“收藏延伸”和“30 分钟电台”会从红心、播放记录以及“喜欢的音乐”类歌单建立本地画像。
-- 陌生歌曲必须能与常听艺术家、专辑、社团或标签建立联系，并在列表中显示逐曲推荐理由；没有可靠信号时宁可不推荐。
-- 桌面歌词专注模式只在直接点击歌词字形后显示控制栏，未激活时其余区域保持鼠标穿透。
-- 本地播放状态、封面和诊断日志保存在用户本机，不依赖在线账号。
+OfflineMusicLibrary is a local-first music manager and player. Version 1.6.1 is the full Windows x64 release; the Linux/macOS preview remains available in v1.4.0.
 
-## 网易云导入为什么曾经只得到几首
+## 1.6.1 重点更新
 
-网易云歌单详情接口可能声明数百首并返回完整的 ID 列表，却只在 `tracks` 字段中嵌入少量歌曲。1.2 现在会按 ID 分批请求详情、重试失败批次，并保留未解析 ID；导入结果会分别显示声明数、取得的 ID 数、详情数、精确匹配、模糊匹配与本地缺失数。因此“303 首”不会再静默变成 4 首，也不会为了凑数误配同名改编曲。
+- 沉浸式播放页提供标准、黑胶与歌词三种布局，包含大封面、唱臂进度、本地歌曲资料和相似歌曲建议，并可可靠返回曲库。
+- 原文、音译与翻译可独立设置颜色、透明度和显示组合；描边颜色与粗细也可调节，桌面歌词和播放页共用一致的样式规则。
+- 加入安全播放模式、播放停滞看门狗、有限次数自动恢复、恢复宽限期，以及音频后端、硬件解码、视频输出和缓存档案。
+- 应用状态写入采用备份与恢复路径；音乐根目录暂时不可用时保留已有曲库和歌单，不把离线磁盘误判为已删除内容。
+- 增强迷你播放器、任务栏播放控制、主题、播放队列、歌单维护和诊断日志。
+- 保留网易云歌单与播放历史离线导入、本地推荐、专辑/社团整理、封面、EQ 与空间音效。
 
-## 导入网易云播放历史
+## 歌词能力
 
-Windows 在“网易云导入”菜单选择“导入播放历史…”，macOS / Linux 使用顶部的“导入播放历史”按钮。支持：
-
-- 网易云播放记录接口响应 JSON（含 `allData` 或 `weekData`）；有全量记录时会自动忽略重复的周记录。
-- CSV / TSV：歌名列必需，建议同时提供歌手；还可包含歌曲 ID、专辑、播放次数与最近播放时间。
-
-匹配优先使用网易云歌曲 ID；没有 ID 时，只有歌名、艺人或专辑足以确定唯一结果才会写入。同名歧义会留在导入报告中。播放次数按较大的可信值合并，最近播放时间按较新值合并，因此可以安全地重复导入同一份文件。全部处理均在本机完成，不需要把账号 Cookie 交给应用。
+- 支持原文、音译、翻译三轨歌词，以及原文+翻译、原文+音译、音译+翻译、全部显示和单轨显示。
+- 支持主文字、次文字、音译、翻译、描边五种独立颜色。
+- 支持原文渐变、分轨透明度、字号与描边比例，并对旧设置自动补齐兼容默认值。
+- 可从同名 `.lrc` 的同一时间轴中区分原文、音译与内嵌翻译，并识别 `.zh.lrc`、`.trans.lrc` 等翻译旁路文件。
 
 ## 下载与运行
 
-- Windows：解压 `OfflineMusicLibrary-1.4.0-windows-x64.zip` 后运行 `OfflineMusicLibrary.exe`。
-- macOS Apple Silicon：解压 `OfflineMusicLibrary-1.4.0-macos-arm64.zip`，把应用拖入“应用程序”。播放需要系统中安装 VLC.app。
-- macOS Intel：使用 `OfflineMusicLibrary-1.4.0-macos-x64.zip`；发行包包含 Intel LibVLC。
-- Linux x64：解压 `OfflineMusicLibrary-1.4.0-linux-x64.tar.gz`，安装发行版提供的 VLC/libVLC，然后运行 `./OfflineMusicLibrary`。
-
-macOS 包采用临时签名而非 Apple 公证；首次启动可在 Finder 中右键应用并选择“打开”。Linux 的桌面入口模板位于 `packaging/linux`。
+从 [Releases](https://github.com/Shist1145/OfflineMusicLibrary/releases) 下载 `OfflineMusicLibrary-1.6.1-windows-x64.zip`，解压后运行 `OfflineMusicLibrary.exe`。这是自包含版本，不要求另行安装 .NET；首次启动不会上传曲库或账号信息。
 
 ## 从源码构建
 
-需要 .NET 10 SDK。
+需要 .NET 10 SDK 与 Windows x64。
 
 ```powershell
-# Windows 完整版
-dotnet publish OfflineMusicLibrary.csproj -c Release -r win-x64 --self-contained true
+dotnet build src/OfflineMusicLibrary/OfflineMusicLibrary.csproj -c Release
 
-# 跨平台版示例
-dotnet publish CrossPlatform/OfflineMusicLibrary.CrossPlatform.csproj -c Release -r linux-x64 --self-contained true
+$projects = Get-ChildItem tests -Recurse -Filter *.csproj
+foreach ($project in $projects) {
+    dotnet run --project $project.FullName -c Release
+}
+
+dotnet publish src/OfflineMusicLibrary/OfflineMusicLibrary.csproj `
+    -c Release -r win-x64 --self-contained true -o artifacts/windows
 ```
 
-确定性测试不会读取个人曲库或访问网易云网络：
+回归检查不读取真实个人曲库，也不访问网易云网络，覆盖曲库离线保留、歌词解析与样式、专辑身份、迷你播放器、歌单维护、推荐、播放稳定性和状态恢复。
 
-```powershell
-dotnet test release/OfflineMusicLibrary.Tests/OfflineMusicLibrary.Tests.csproj -c Release -r win-x64 --filter "Category!=Integration"
-```
+## 源码结构
 
-发行资产提供 Windows x64、Linux x64、macOS Intel 和 macOS Apple Silicon 四种包。
+- `src/OfflineMusicLibrary`：Windows WPF 完整版。
+- `tests`：无需个人数据的确定性回归检查。
+- `CrossPlatform`：保留的 1.4.0 Avalonia 跨平台预览源码。
+- `packaging`：Linux 与 macOS 预览版打包资料。

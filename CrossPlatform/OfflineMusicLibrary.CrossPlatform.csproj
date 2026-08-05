@@ -32,8 +32,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\NetEasePlaylistService.cs" Link="Shared\NetEasePlaylistService.cs" />
-    <Compile Include="..\NetEaseHistoryImportService.cs" Link="Shared\NetEaseHistoryImportService.cs" />
     <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 </Project>

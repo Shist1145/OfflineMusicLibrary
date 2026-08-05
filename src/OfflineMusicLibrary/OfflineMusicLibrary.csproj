@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <LangVersion>14.0</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>OfflineMusicLibrary</AssemblyName>
+    <RootNamespace>OfflineMusicLibrary</RootNamespace>
+    <ApplicationIcon>Assets\OfflineMusicLibrary-logo.ico</ApplicationIcon>
+    <Product>本地音乐库</Product>
+    <Description>离线音乐管理、播放、歌单、封面与多语歌词工具</Description>
+    <Version>1.6.1</Version>
+    <FileVersion>1.6.1.0</FileVersion>
+    <AssemblyVersion>1.6.1.0</AssemblyVersion>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <Authors>Local Library User</Authors>
+    <RepositoryUrl>https://github.com/Shist1145/OfflineMusicLibrary</RepositoryUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Page Remove="OfflineMusicLibrary.App.xaml" />
+    <ApplicationDefinition Include="OfflineMusicLibrary.App.xaml" />
+    <None Remove="app.ico" />
+    <EmbeddedResource Include="app.ico" LogicalName="app.ico" />
+    <None Remove="Assets\OfflineMusicLibrary-logo.png" />
+    <None Remove="Assets\OfflineMusicLibrary-logo.ico" />
+    <Resource Include="Assets\OfflineMusicLibrary-logo.png" />
+    <Resource Include="Assets\OfflineMusicLibrary-logo.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibVLCSharp" Version="3.10.0" />
+    <PackageReference Include="LibVLCSharp.WPF" Version="3.10.0" />
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.23.1" />
+  </ItemGroup>
+</Project>
