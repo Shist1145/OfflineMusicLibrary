@@ -1,96 +1,97 @@
-name: Build OfflineMusicLibrary 1.2
+name: Build OfflineMusicLibrary 1.6.1
 
 on:
   push:
     branches: [main]
-    tags: [v1.2, v1.2.0]
+    tags: [v1.6.1]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
+env:
+  RELEASE_VERSION: 1.6.1
+
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
-      - name: Run deterministic tests
-        run: dotnet test release/OfflineMusicLibrary.Tests/OfflineMusicLibrary.Tests.csproj -c Release -r win-x64 --filter "Category!=Integration"
-      - name: Publish Windows 1.2
-        run: dotnet publish OfflineMusicLibrary.csproj -c Release -r win-x64 --self-contained true -o artifacts/windows
-      - name: Create Windows archive
-        shell: pwsh
-        run: Compress-Archive -Path artifacts/windows/* -DestinationPath artifacts/OfflineMusicLibrary-1.2-windows-x64.zip -Force
-      - uses: actions/upload-artifact@v4
-        with:
-          name: OfflineMusicLibrary-1.2-windows-x64
-          path: artifacts/OfflineMusicLibrary-1.2-windows-x64.zip
 
-  unix:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            rid: linux-x64
-            artifact: OfflineMusicLibrary-1.2-linux-x64
-            kind: linux
-          - os: macos-15
-            rid: osx-arm64
-            artifact: OfflineMusicLibrary-1.2-macos-arm64
-            kind: macos
-          - os: macos-15-intel
-            rid: osx-x64
-            artifact: OfflineMusicLibrary-1.2-macos-x64
-            kind: macos
-    runs-on: ${{ matrix.os }}
+      - name: Restore and build Windows app
+        run: |
+          dotnet restore src/OfflineMusicLibrary/OfflineMusicLibrary.csproj
+          dotnet build src/OfflineMusicLibrary/OfflineMusicLibrary.csproj -c Release --no-restore
+
+      - name: Run deterministic regression checks
+        shell: pwsh
+        run: |
+          $projects = Get-ChildItem tests -Recurse -Filter *.csproj | Sort-Object FullName
+          foreach ($project in $projects) {
+            Write-Host "Running $($project.Directory.Name)"
+            dotnet run --project $project.FullName -c Release
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Publish self-contained Windows x64 build
+        shell: pwsh
+        run: |
+          $publishDir = "artifacts/windows"
+          $archiveName = "OfflineMusicLibrary-$env:RELEASE_VERSION-windows-x64.zip"
+          dotnet publish src/OfflineMusicLibrary/OfflineMusicLibrary.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:DebugType=None -p:DebugSymbols=false `
+            -o $publishDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($unusedArchitecture in @("win-x86", "win-arm64")) {
+            $unusedRuntime = Join-Path $publishDir "libvlc/$unusedArchitecture"
+            if (Test-Path -LiteralPath $unusedRuntime) {
+              Remove-Item -LiteralPath $unusedRuntime -Recurse -Force
+            }
+          }
+          Compress-Archive -Path "$publishDir/*" -DestinationPath "artifacts/$archiveName" -Force
+          $hash = (Get-FileHash "artifacts/$archiveName" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash *$archiveName" | Set-Content "artifacts/SHA256SUMS-$env:RELEASE_VERSION.txt" -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OfflineMusicLibrary-${{ env.RELEASE_VERSION }}-windows-x64
+          path: |
+            artifacts/OfflineMusicLibrary-${{ env.RELEASE_VERSION }}-windows-x64.zip
+            artifacts/SHA256SUMS-${{ env.RELEASE_VERSION }}.txt
+          if-no-files-found: error
+
+  cross-platform-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
-      - name: Publish cross-platform app
-        run: dotnet publish CrossPlatform/OfflineMusicLibrary.CrossPlatform.csproj -c Release -r ${{ matrix.rid }} --self-contained true -o artifacts/publish
-      - name: Package Linux
-        if: matrix.kind == 'linux'
-        shell: bash
-        run: |
-          cp packaging/linux/README.txt artifacts/publish/
-          cp packaging/linux/offline-music-library.desktop artifacts/publish/
-          chmod +x artifacts/publish/OfflineMusicLibrary
-          tar -czf artifacts/${{ matrix.artifact }}.tar.gz -C artifacts/publish .
-      - name: Package macOS app
-        if: matrix.kind == 'macos'
-        shell: bash
-        run: |
-          APP="artifacts/本地音乐库.app"
-          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-          cp -R artifacts/publish/. "$APP/Contents/MacOS/"
-          cp packaging/macos/Info.plist "$APP/Contents/Info.plist"
-          cp packaging/macos/README.txt "$APP/Contents/Resources/"
-          chmod +x "$APP/Contents/MacOS/OfflineMusicLibrary"
-          codesign --force --deep --sign - "$APP"
-          ditto -c -k --sequesterRsrc --keepParent "$APP" "artifacts/${{ matrix.artifact }}.zip"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: artifacts/${{ matrix.artifact }}.*
+      - name: Verify retained 1.4.0 cross-platform source
+        run: dotnet build CrossPlatform/OfflineMusicLibrary.CrossPlatform.csproj -c Release
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v1.2')
-    needs: [windows, unix]
+    if: github.ref == 'refs/tags/v1.6.1'
+    needs: [windows, cross-platform-source]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
+          name: OfflineMusicLibrary-${{ env.RELEASE_VERSION }}-windows-x64
           path: artifacts
-          merge-multiple: true
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/* --title "本地音乐库 1.2" --generate-notes
+        run: >-
+          gh release create "$GITHUB_REF_NAME" artifacts/*
+          --title "本地音乐库 ${{ env.RELEASE_VERSION }}"
+          --notes-file RELEASE_NOTES.md

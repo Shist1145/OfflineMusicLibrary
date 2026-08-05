@@ -3,6 +3,7 @@
 [Oo]bj/
 .vs/
 .idea/
+.vscode/
 TestResults/
 *.user
 *.suo
@@ -10,13 +11,11 @@ TestResults/
 *.log
 *.tmp
 
-# Local publish output and packaged releases
+# Local tools, builds, and packaged releases
+.tools/
 artifacts/
 dist/
-release/*
-!release/OfflineMusicLibrary.Tests/
-!release/OfflineMusicLibrary.Tests/OfflineMusicLibrary.Tests.csproj
-!release/OfflineMusicLibrary.Tests/LibraryTests.cs
+release/
 *.zip
 *.tar.gz
 
@@ -36,6 +35,7 @@ library-cross-platform.json
 *.mp4
 *.mkv
 *.webm
+*.lrc
 
 # OS files
 Thumbs.db

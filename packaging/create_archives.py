@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RELEASE = ROOT / "release"
 ARTIFACTS = ROOT / "artifacts"
 APP_NAME = "本地音乐库.app"
+VERSION = "1.4.0"
 
 
 def zip_info(name: str, *, executable: bool = False, directory: bool = False) -> zipfile.ZipInfo:
@@ -31,8 +32,8 @@ def add_zip_file(archive: zipfile.ZipFile, source: Path, target: str, *, executa
 
 
 def package_macos(architecture: str) -> Path:
-    source = RELEASE / f"OfflineMusicLibrary-1.2-macos-{architecture}"
-    destination = ARTIFACTS / f"OfflineMusicLibrary-1.2-macos-{architecture}.zip"
+    source = RELEASE / f"OfflineMusicLibrary-{VERSION}-macos-{architecture}"
+    destination = ARTIFACTS / f"OfflineMusicLibrary-{VERSION}-macos-{architecture}.zip"
     if not (source / "OfflineMusicLibrary").is_file():
         raise FileNotFoundError(f"macOS publish output is missing: {source}")
 
@@ -58,8 +59,8 @@ def package_macos(architecture: str) -> Path:
 
 
 def package_linux() -> Path:
-    source = RELEASE / "OfflineMusicLibrary-1.2-linux-x64"
-    destination = ARTIFACTS / "OfflineMusicLibrary-1.2-linux-x64.tar.gz"
+    source = RELEASE / f"OfflineMusicLibrary-{VERSION}-linux-x64"
+    destination = ARTIFACTS / f"OfflineMusicLibrary-{VERSION}-linux-x64.tar.gz"
     if not (source / "OfflineMusicLibrary").is_file():
         raise FileNotFoundError(f"Linux publish output is missing: {source}")
 
@@ -92,4 +93,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

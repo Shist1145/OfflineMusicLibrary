@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application x:Class="OfflineMusicLibrary.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:offlinemusiclibrary="clr-namespace:OfflineMusicLibrary;assembly=OfflineMusicLibrary" StartupUri="OfflineMusicLibrary.MainWindow.xaml">
+  <Application.Resources>
+    <ResourceDictionary>
+      <SolidColorBrush x:Key="AppBackgroundBrush" Color="#F3F5F4" />
+      <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
+      <SolidColorBrush x:Key="SidebarBrush" Color="#EAF0ED" />
+      <SolidColorBrush x:Key="TextBrush" Color="#1E2725" />
+      <SolidColorBrush x:Key="MutedTextBrush" Color="#68746F" />
+      <SolidColorBrush x:Key="AccentBrush" Color="#147D6A" />
+      <SolidColorBrush x:Key="AccentHoverBrush" Color="#0F6D5C" />
+      <SolidColorBrush x:Key="WarmBrush" Color="#C55C47" />
+      <SolidColorBrush x:Key="LineBrush" Color="#DCE3E0" />
+      <SolidColorBrush x:Key="SelectionBrush" Color="#DCEDE8" />
+      <SolidColorBrush x:Key="ControlBrush" Color="#F8FAF9" />
+      <SolidColorBrush x:Key="ControlHoverBrush" Color="#EDF3F0" />
+      <SolidColorBrush x:Key="ControlPressedBrush" Color="#DCE9E5" />
+      <SolidColorBrush x:Key="InputBrush" Color="#F7F9F8" />
+      <SolidColorBrush x:Key="ItemHoverBrush" Color="#E2EAE6" />
+      <SolidColorBrush x:Key="GridLineBrush" Color="#EDF1EF" />
+      <SolidColorBrush x:Key="RowHoverBrush" Color="#F2F6F4" />
+      <SolidColorBrush x:Key="HeaderBrush" Color="#F7F9F8" />
+      <SolidColorBrush x:Key="SecondarySurfaceBrush" Color="#F5F8F7" />
+      <SolidColorBrush x:Key="CoverFallbackBrush" Color="#E3E9E6" />
+      <SolidColorBrush x:Key="CoverGlyphBrush" Color="#9AA9A3" />
+      <Style x:Key="{x:Type Window}" TargetType="{x:Type Window}">
+        <Setter Property="FontFamily" Value="Microsoft YaHei UI" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+        <Setter Property="Background" Value="{DynamicResource AppBackgroundBrush}" />
+        <Setter Property="FrameworkElement.UseLayoutRounding" Value="True" />
+        <Setter Property="UIElement.SnapsToDevicePixels" Value="True" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
+        <Setter Property="TextOptions.TextRenderingMode" Value="Auto" />
+      </Style>
+      <Style x:Key="{x:Type Button}" TargetType="{x:Type Button}">
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+        <Setter Property="Background" Value="{DynamicResource ControlBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="12,7" />
+        <Setter Property="FrameworkElement.Cursor" Value="Hand" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type Button}">
+              <Border Name="Border" Background="{TemplateBinding Control.Background}" BorderBrush="{TemplateBinding Control.BorderBrush}" BorderThickness="{TemplateBinding Control.BorderThickness}" CornerRadius="5">
+                <ContentPresenter HorizontalAlignment="{TemplateBinding Control.HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding Control.VerticalContentAlignment}" Margin="{TemplateBinding Control.Padding}" />
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsMouseOver" Value="True">
+                  <Setter TargetName="Border" Property="Border.Background" Value="{DynamicResource ControlHoverBrush}" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Border" Property="Border.Background" Value="{DynamicResource ControlPressedBrush}" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                  <Setter Property="UIElement.Opacity" Value="0.45" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="AccentButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+        <Setter Property="Foreground" Value="#FFFFFFFF" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+      </Style>
+      <Style x:Key="IconButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Width" Value="36" />
+        <Setter Property="Height" Value="36" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="FontSize" Value="17" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+      </Style>
+      <Style x:Key="NavButtonStyle" TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Background" Value="#00FFFFFF" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Padding" Value="12,9" />
+        <Setter Property="Margin" Value="0,1" />
+      </Style>
+      <Style x:Key="{x:Type TextBox}" TargetType="{x:Type TextBox}">
+        <Setter Property="Background" Value="{DynamicResource InputBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="10,7" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+      </Style>
+      <Style x:Key="{x:Type ComboBox}" TargetType="{x:Type ComboBox}">
+        <Setter Property="Padding" Value="8,5" />
+        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+      </Style>
+      <Style x:Key="{x:Type ListBoxItem}" TargetType="{x:Type ListBoxItem}">
+        <Setter Property="Padding" Value="10,7" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type ListBoxItem}">
+              <Border Name="ItemBorder" Background="{TemplateBinding Control.Background}" CornerRadius="4">
+                <ContentPresenter Margin="{TemplateBinding Control.Padding}" />
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsMouseOver" Value="True">
+                  <Setter TargetName="ItemBorder" Property="Border.Background" Value="{DynamicResource ItemHoverBrush}" />
+                </Trigger>
+                <Trigger Property="ListBoxItem.IsSelected" Value="True">
+                  <Setter TargetName="ItemBorder" Property="Border.Background" Value="{DynamicResource SelectionBrush}" />
+                  <Setter Property="FontWeight" Value="SemiBold" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="{x:Type DataGrid}" TargetType="{x:Type DataGrid}">
+        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="DataGrid.GridLinesVisibility" Value="Horizontal" />
+        <Setter Property="DataGrid.HorizontalGridLinesBrush" Value="{DynamicResource GridLineBrush}" />
+        <Setter Property="DataGrid.HeadersVisibility" Value="Column" />
+        <Setter Property="DataGrid.RowHeight" Value="42" />
+        <Setter Property="DataGrid.ColumnHeaderHeight" Value="38" />
+        <Setter Property="DataGrid.SelectionMode" Value="Extended" />
+        <Setter Property="DataGrid.SelectionUnit" Value="FullRow" />
+        <Setter Property="DataGrid.CanUserAddRows" Value="False" />
+        <Setter Property="DataGrid.CanUserDeleteRows" Value="False" />
+        <Setter Property="DataGrid.IsReadOnly" Value="True" />
+      </Style>
+      <Style x:Key="{x:Type DataGridRow}" TargetType="{x:Type DataGridRow}">
+        <Setter Property="Background" Value="{DynamicResource SurfaceBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Style.Triggers>
+          <Trigger Property="UIElement.IsMouseOver" Value="True">
+            <Setter Property="Background" Value="{DynamicResource RowHoverBrush}" />
+          </Trigger>
+          <Trigger Property="DataGridRow.IsSelected" Value="True">
+            <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+          </Trigger>
+        </Style.Triggers>
+      </Style>
+      <Style x:Key="{x:Type DataGridColumnHeader}" TargetType="{x:Type DataGridColumnHeader}">
+        <Setter Property="Background" Value="{DynamicResource HeaderBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+        <Setter Property="Padding" Value="10,0" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Style.Triggers>
+          <Trigger Property="DataGridColumnHeader.CanUserSort" Value="True">
+            <Setter Property="FrameworkElement.Cursor" Value="Hand" />
+            <Setter Property="FrameworkElement.ToolTip" Value="点击排序，再次点击切换升序/降序" />
+          </Trigger>
+          <Trigger Property="UIElement.IsMouseOver" Value="True">
+            <Setter Property="Background" Value="{DynamicResource ItemHoverBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+          </Trigger>
+        </Style.Triggers>
+      </Style>
+      <Style x:Key="{x:Type TabItem}" TargetType="{x:Type TabItem}">
+        <Setter Property="Padding" Value="14,8" />
+        <Setter Property="Foreground" Value="{DynamicResource MutedTextBrush}" />
+        <Style.Triggers>
+          <Trigger Property="TabItem.IsSelected" Value="True">
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+          </Trigger>
+        </Style.Triggers>
+      </Style>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>

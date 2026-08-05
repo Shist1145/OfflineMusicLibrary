@@ -19,6 +19,7 @@ public sealed partial class MainWindow : Window
     private readonly ObservableCollection<TrackModel> _playlistItems = [];
     private readonly ObservableCollection<TrackModel> _albumTrackItems = [];
     private readonly ObservableCollection<TrackModel> _circleTrackItems = [];
+    private readonly ObservableCollection<TrackModel> _recommendationItems = [];
     private readonly ObservableCollection<AlbumCard> _albumItems = [];
     private readonly ObservableCollection<CircleCard> _circleItems = [];
     private readonly Dictionary<string, Bitmap> _coverCache = new(
@@ -27,6 +28,7 @@ public sealed partial class MainWindow : Window
     private DataGrid _playlistGrid = null!;
     private DataGrid _albumTracksGrid = null!;
     private DataGrid _circleTracksGrid = null!;
+    private DataGrid _recommendationGrid = null!;
     private ListBox _playlistList = null!;
     private ListBox _albumList = null!;
     private ListBox _circleList = null!;
@@ -36,6 +38,8 @@ public sealed partial class MainWindow : Window
     private TextBlock _nowPlayingText = null!;
     private TextBlock _positionText = null!;
     private TextBlock _statusText = null!;
+    private TextBlock _recommendationTasteText = null!;
+    private TextBlock _recommendationInsightText = null!;
     private Slider _positionSlider = null!;
     private Slider _volumeSlider = null!;
     private AppState _state = new();
@@ -44,6 +48,8 @@ public sealed partial class MainWindow : Window
     private bool _isBusy;
     private bool _isLoaded;
     private bool _updatingPosition;
+    private int _recommendationRefreshSalt;
+    private RecommendationPreset _activeRecommendationPreset = RecommendationPreset.RediscoverFavorites;
 
     public MainWindow()
     {
@@ -52,6 +58,7 @@ public sealed partial class MainWindow : Window
         _playlistGrid = RequireControl<DataGrid>("PlaylistGrid");
         _albumTracksGrid = RequireControl<DataGrid>("AlbumTracksGrid");
         _circleTracksGrid = RequireControl<DataGrid>("CircleTracksGrid");
+        _recommendationGrid = RequireControl<DataGrid>("RecommendationGrid");
         _playlistList = RequireControl<ListBox>("PlaylistList");
         _albumList = RequireControl<ListBox>("AlbumList");
         _circleList = RequireControl<ListBox>("CircleList");
@@ -61,6 +68,8 @@ public sealed partial class MainWindow : Window
         _nowPlayingText = RequireControl<TextBlock>("NowPlayingText");
         _positionText = RequireControl<TextBlock>("PositionText");
         _statusText = RequireControl<TextBlock>("StatusText");
+        _recommendationTasteText = RequireControl<TextBlock>("RecommendationTasteText");
+        _recommendationInsightText = RequireControl<TextBlock>("RecommendationInsightText");
         _positionSlider = RequireControl<Slider>("PositionSlider");
         _volumeSlider = RequireControl<Slider>("VolumeSlider");
 
@@ -68,6 +77,7 @@ public sealed partial class MainWindow : Window
         _playlistGrid.ItemsSource = _playlistItems;
         _albumTracksGrid.ItemsSource = _albumTrackItems;
         _circleTracksGrid.ItemsSource = _circleTrackItems;
+        _recommendationGrid.ItemsSource = _recommendationItems;
         _albumList.ItemsSource = _albumItems;
         _circleList.ItemsSource = _circleItems;
 
@@ -239,12 +249,73 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void ImportNetEaseHistoryButton_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_isBusy)
+            return;
+
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "导入网易云播放历史",
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new FilePickerFileType("网易云播放历史") { Patterns = ["*.json", "*.csv", "*.tsv", "*.txt"] },
+                FilePickerFileTypes.All
+            ]
+        });
+        if (files.Count == 0)
+            return;
+        var filePath = files[0].TryGetLocalPath();
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            await ShowMessageAsync("无法读取文件", "请选择保存在本机磁盘上的 JSON、CSV、TSV 或 TXT 文件。");
+            return;
+        }
+
+        _isBusy = true;
+        try
+        {
+            _statusText.Text = "正在匹配网易云播放历史…";
+            var result = await NetEaseHistoryImportService.ImportAsync(filePath, _state.Tracks);
+            await _store.SaveAsync(_state);
+            RefreshAllViews();
+
+            var unmatched = string.Join(Environment.NewLine, result.Unmatched.Take(10).Select(item =>
+                $"• {item.Title} - {(string.IsNullOrWhiteSpace(item.Artist) ? "未知歌手" : item.Artist)}"));
+            var message = $"读取历史记录：{result.SourceRecordCount:N0}{Environment.NewLine}" +
+                          $"匹配记录：{result.MatchedRecordCount:N0}{Environment.NewLine}" +
+                          $"更新本地歌曲：{result.MatchedTrackCount:N0}{Environment.NewLine}" +
+                          $"网易云 ID 精确匹配：{result.ExactMatchCount:N0}{Environment.NewLine}" +
+                          $"歌名 / 艺人保守匹配：{result.FuzzyMatchCount:N0}{Environment.NewLine}" +
+                          $"新增可信播放次数：{result.PlayCountIncrease:N0}{Environment.NewLine}" +
+                          $"更新最近播放时间：{result.LastPlayedUpdateCount:N0}{Environment.NewLine}" +
+                          $"未匹配：{result.Unmatched.Count:N0}（含歧义 {result.AmbiguousCount:N0}）";
+            if (unmatched.Length > 0)
+                message += $"{Environment.NewLine}{Environment.NewLine}部分未匹配记录：{Environment.NewLine}{unmatched}";
+            message += $"{Environment.NewLine}{Environment.NewLine}播放历史已立即用于安心发现；重复导入不会重复累加。";
+            await ShowMessageAsync("播放历史导入完成", message);
+            _statusText.Text = $"已导入网易云历史：匹配 {result.MatchedRecordCount:N0} / {result.SourceRecordCount:N0} 条";
+        }
+        catch (Exception exception)
+        {
+            DiagnosticLog.Write("NetEaseHistoryImport", "播放历史导入失败。", exception);
+            await ShowMessageAsync("播放历史导入失败", exception.Message);
+        }
+        finally
+        {
+            _isBusy = false;
+        }
+    }
+
     private void SearchBox_TextChanged(object? sender, TextChangedEventArgs e) => RefreshAllViews();
 
     private void MainTabs_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (!_isLoaded)
             return;
+        if (_mainTabs.SelectedIndex == 4)
+            OpenRecommendation(_activeRecommendationPreset);
         UpdateCurrentQueue();
     }
 
@@ -285,6 +356,7 @@ public sealed partial class MainWindow : Window
             return;
         track.IsFavorite = !track.IsFavorite;
         await _store.SaveAsync(_state);
+        OpenRecommendation(_activeRecommendationPreset);
         e.Handled = true;
     }
 
@@ -346,6 +418,7 @@ public sealed partial class MainWindow : Window
             _playback.Play(track.FilePath);
             _currentTrack = track;
             track.PlayCount++;
+            track.LastPlayedAt = DateTime.Now;
             _nowPlayingText.Text = $"{track.Title}  —  {track.Artist}";
             _statusText.Text = $"正在播放：{track.Title}";
             _ = _store.SaveAsync(_state);
@@ -435,6 +508,7 @@ public sealed partial class MainWindow : Window
             _circleList.SelectedIndex = 0;
 
         _trackCountText.Text = $"{filtered.Count:N0} / {_state.Tracks.Count:N0} 首";
+        RefreshRecommendationOverview();
         UpdateCurrentQueue();
     }
 
@@ -465,8 +539,80 @@ public sealed partial class MainWindow : Window
             1 => _playlistItems.ToList(),
             2 => _albumTrackItems.ToList(),
             3 => _circleTrackItems.ToList(),
+            4 => _recommendationItems.ToList(),
             _ => _libraryItems.ToList()
         };
+    }
+
+    private void RefreshRecommendationOverview()
+    {
+        var implicitLikes = GetImplicitFavoriteTrackIds();
+        _recommendationTasteText.Text = RecommendationService.DescribeTaste(_state.Tracks, implicitLikes);
+        OpenRecommendation(_activeRecommendationPreset);
+    }
+
+    private void OpenRecommendation(RecommendationPreset preset)
+    {
+        _activeRecommendationPreset = preset;
+        var result = RecommendationService.Create(
+            _state.Tracks,
+            preset,
+            DateTime.Now,
+            _recommendationRefreshSalt,
+            implicitFavoriteTrackIds: GetImplicitFavoriteTrackIds());
+        foreach (var track in result.Tracks)
+            track.RecommendationReason = result.ReasonFor(track);
+        Replace(_recommendationItems, FilterTracks(result.Tracks));
+        _recommendationInsightText.Text = $"{result.Title} · {result.Insight}";
+        if (_mainTabs.SelectedIndex == 4)
+            _trackCountText.Text = $"{_recommendationItems.Count:N0} 首";
+    }
+
+    private void RecommendationPresetButton_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: not null } button &&
+            Enum.TryParse<RecommendationPreset>(button.Tag.ToString(), true, out var preset))
+        {
+            OpenRecommendation(preset);
+            UpdateCurrentQueue();
+        }
+    }
+
+    private void RefreshRecommendationButton_Click(object? sender, RoutedEventArgs e)
+    {
+        _recommendationRefreshSalt++;
+        OpenRecommendation(_activeRecommendationPreset);
+        UpdateCurrentQueue();
+    }
+
+    private void PlayRecommendationButton_Click(object? sender, RoutedEventArgs e)
+    {
+        UpdateCurrentQueue();
+        var first = _recommendationItems.FirstOrDefault();
+        if (first is null)
+        {
+            _statusText.Text = "当前预设还没有足够可靠的候选。";
+            return;
+        }
+        PlayTrack(first);
+    }
+
+    private HashSet<string> GetImplicitFavoriteTrackIds() =>
+        _state.Playlists
+            .Where(playlist => IsFavoritePlaylistName(playlist.Name))
+            .SelectMany(playlist => playlist.TrackIds ?? [])
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsFavoritePlaylistName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return false;
+        var value = name.Trim();
+        return value.Contains("喜欢的音乐", StringComparison.CurrentCultureIgnoreCase) ||
+               value.Equals("我喜欢", StringComparison.CurrentCultureIgnoreCase) ||
+               value.Contains("liked songs", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("favorites", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("favourites", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task LoadCoversAsync(IEnumerable<TrackModel> tracks)
