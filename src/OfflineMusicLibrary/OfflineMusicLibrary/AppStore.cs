@@ -10,6 +10,8 @@ namespace OfflineMusicLibrary;
 public sealed class AppStore
 {
 	private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
+	private readonly object _validStateGate = new object();
+	private readonly Dictionary<string, StateFileStamp> _validStateFiles = new Dictionary<string, StateFileStamp>(StringComparer.OrdinalIgnoreCase);
 
 	private readonly JsonSerializerOptions _options = new JsonSerializerOptions
 	{
@@ -41,17 +43,18 @@ public sealed class AppStore
 	public async Task<AppState> LoadAsync()
 	{
 		Directory.CreateDirectory(DataDirectory);
-		AppState? current = await TryLoadStateFilesAsync("新版", StatePath, StateBackupPath, StatePreviousPath);
+		CleanupStaleTemporaryFiles();
+		AppState? current = await TryLoadStateFilesAsync("新版", StatePath, StateBackupPath, StatePreviousPath).ConfigureAwait(false);
 		if (current != null)
 		{
 			return current;
 		}
 
-		AppState? legacy = await TryLoadStateFilesAsync("旧版", LegacyStatePath, LegacyStateBackupPath);
+		AppState? legacy = await TryLoadStateFilesAsync("旧版", LegacyStatePath, LegacyStateBackupPath).ConfigureAwait(false);
 		if (legacy != null)
 		{
 			legacy.StateFormatVersion = 2;
-			await SaveAsync(legacy);
+			await SaveAsync(legacy).ConfigureAwait(false);
 			DiagnosticLog.Write("STATE", "Migrated legacy library.json into isolated v2 state files");
 			return legacy;
 		}
@@ -69,7 +72,7 @@ public sealed class AppStore
 			}
 			try
 			{
-				AppState state = await LoadStateFileAsync(path);
+				AppState state = await LoadStateFileAsync(path).ConfigureAwait(false);
 				if (index > 0)
 				{
 					DiagnosticLog.Write("STATE", $"已从{label}状态第 {index} 级备份恢复曲库与设置：{Path.GetFileName(path)}");
@@ -91,32 +94,34 @@ public sealed class AppStore
 	public async Task SaveAsync(AppState state, CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(state);
-		await _writeLock.WaitAsync(cancellationToken);
+		await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
 		string temporary = StatePath + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
 		try
 		{
 			Directory.CreateDirectory(DataDirectory);
-			await using FileStream stateWriteLock = await AcquireStateWriteLockAsync(cancellationToken);
-			await WriteValidatedTemporaryStateAsync(temporary, state, cancellationToken);
+			await using FileStream stateWriteLock = await AcquireStateWriteLockAsync(cancellationToken).ConfigureAwait(false);
+			bool primaryWasValid = await IsValidStateFileAsync(StatePath, cancellationToken).ConfigureAwait(false);
+			bool backupWasValid = state.StateBackupEnabled &&
+				await IsValidStateFileAsync(StateBackupPath, cancellationToken).ConfigureAwait(false);
+			await WriteTemporaryStateAsync(temporary, state, cancellationToken).ConfigureAwait(false);
 
-			bool primaryWasValid = await IsValidStateFileAsync(StatePath, cancellationToken);
 			if (state.StateBackupEnabled)
 			{
-				bool backupWasValid = await IsValidStateFileAsync(StateBackupPath, cancellationToken);
 				if (backupWasValid)
 				{
-					await CopyValidatedFileAsync(StateBackupPath, StatePreviousPath, cancellationToken);
+					await CopyKnownValidFileAsync(StateBackupPath, StatePreviousPath, cancellationToken).ConfigureAwait(false);
 				}
 				if (primaryWasValid)
 				{
-					await CopyValidatedFileAsync(StatePath, StateBackupPath, cancellationToken);
+					await CopyKnownValidFileAsync(StatePath, StateBackupPath, cancellationToken).ConfigureAwait(false);
 				}
 			}
 
-			await MoveWithRetryAsync(temporary, StatePath, cancellationToken);
-			if (state.StateBackupEnabled && !await IsValidStateFileAsync(StateBackupPath, cancellationToken))
+			await MoveWithRetryAsync(temporary, StatePath, cancellationToken).ConfigureAwait(false);
+			RememberValidStateFile(StatePath);
+			if (state.StateBackupEnabled && !IsKnownValidStateFile(StateBackupPath))
 			{
-				await CopyValidatedFileAsync(StatePath, StateBackupPath, cancellationToken);
+				await CopyKnownValidFileAsync(StatePath, StateBackupPath, cancellationToken).ConfigureAwait(false);
 			}
 		}
 		catch (Exception ex) when (IsRecoverableStateException(ex))
@@ -140,7 +145,7 @@ public sealed class AppStore
 		}
 	}
 
-	private async Task WriteValidatedTemporaryStateAsync(string path, AppState state, CancellationToken cancellationToken)
+	private async Task WriteTemporaryStateAsync(string path, AppState state, CancellationToken cancellationToken)
 	{
 		await using (FileStream stream = new FileStream(
 			path,
@@ -150,18 +155,18 @@ public sealed class AppStore
 			64 * 1024,
 			FileOptions.Asynchronous | FileOptions.WriteThrough))
 		{
-			await JsonSerializer.SerializeAsync(stream, state, _options, cancellationToken);
-			await stream.FlushAsync(cancellationToken);
+			await JsonSerializer.SerializeAsync(stream, state, _options, cancellationToken).ConfigureAwait(false);
+			await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
 			stream.Flush(flushToDisk: true);
 		}
-		_ = await LoadStateFileAsync(path, cancellationToken);
 	}
 
 	private async Task<AppState> LoadStateFileAsync(string path, CancellationToken cancellationToken = default)
 	{
 		await using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-		AppState state = (await JsonSerializer.DeserializeAsync<AppState>(stream, _options, cancellationToken)) ?? throw new JsonException("状态文件内容为空。");
+		AppState state = (await JsonSerializer.DeserializeAsync<AppState>(stream, _options, cancellationToken).ConfigureAwait(false)) ?? throw new JsonException("状态文件内容为空。");
 		Normalize(state);
+		RememberValidStateFile(path);
 		return state;
 	}
 
@@ -169,28 +174,42 @@ public sealed class AppStore
 	{
 		if (!File.Exists(path))
 		{
+			ForgetValidStateFile(path);
 			return false;
+		}
+		if (IsKnownValidStateFile(path))
+		{
+			return true;
 		}
 		try
 		{
-			_ = await LoadStateFileAsync(path, cancellationToken);
+			_ = await LoadStateFileAsync(path, cancellationToken).ConfigureAwait(false);
 			return true;
 		}
 		catch (Exception ex) when (IsRecoverableStateException(ex))
 		{
+			ForgetValidStateFile(path);
 			DiagnosticLog.Write("STATE", $"状态轮换时跳过无效文件：{Path.GetFileName(path)}", ex);
 			return false;
 		}
 	}
 
-	private async Task CopyValidatedFileAsync(string source, string destination, CancellationToken cancellationToken)
+	private async Task CopyKnownValidFileAsync(string source, string destination, CancellationToken cancellationToken)
 	{
+		if (!await IsValidStateFileAsync(source, cancellationToken).ConfigureAwait(false))
+		{
+			throw new InvalidDataException($"Cannot rotate invalid state file: {Path.GetFileName(source)}");
+		}
 		string temporary = destination + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
 		try
 		{
 			File.Copy(source, temporary, overwrite: false);
-			_ = await LoadStateFileAsync(temporary, cancellationToken);
-			await MoveWithRetryAsync(temporary, destination, cancellationToken);
+			if (new FileInfo(source).Length != new FileInfo(temporary).Length)
+			{
+				throw new IOException($"Incomplete state backup copy: {Path.GetFileName(destination)}");
+			}
+			await MoveWithRetryAsync(temporary, destination, cancellationToken).ConfigureAwait(false);
+			RememberValidStateFile(destination);
 		}
 		finally
 		{
@@ -210,7 +229,7 @@ public sealed class AppStore
 			}
 			catch (Exception ex) when (attempt < 2 && (ex is IOException || ex is UnauthorizedAccessException))
 			{
-				await Task.Delay(120, cancellationToken);
+				await Task.Delay(120, cancellationToken).ConfigureAwait(false);
 			}
 		}
 	}
@@ -225,7 +244,7 @@ public sealed class AppStore
 			}
 			catch (IOException) when (attempt < 200)
 			{
-				await Task.Delay(50, cancellationToken);
+				await Task.Delay(50, cancellationToken).ConfigureAwait(false);
 			}
 		}
 	}
@@ -243,6 +262,88 @@ public sealed class AppStore
 		{
 		}
 	}
+
+	private void CleanupStaleTemporaryFiles()
+	{
+		DateTime threshold = DateTime.UtcNow.AddHours(-1);
+		foreach (string pattern in new[]
+		{
+			"library-v2.json.*.tmp",
+			"library-v2.backup.json.*.tmp",
+			"library-v2.previous.json.*.tmp"
+		})
+		{
+			try
+			{
+				foreach (string path in Directory.EnumerateFiles(DataDirectory, pattern, SearchOption.TopDirectoryOnly))
+				{
+					if (File.GetLastWriteTimeUtc(path) < threshold)
+					{
+						TryDeleteTemporaryFile(path);
+					}
+				}
+			}
+			catch (Exception ex) when (IsRecoverableStateException(ex))
+			{
+				DiagnosticLog.Write("STATE", "Could not clean stale state temporary files", ex);
+			}
+		}
+	}
+
+	private bool IsKnownValidStateFile(string path)
+	{
+		StateFileStamp current;
+		try
+		{
+			FileInfo info = new FileInfo(path);
+			if (!info.Exists)
+			{
+				return false;
+			}
+			current = new StateFileStamp(info.Length, info.LastWriteTimeUtc.Ticks);
+		}
+		catch (Exception ex) when (IsRecoverableStateException(ex))
+		{
+			return false;
+		}
+
+		lock (_validStateGate)
+		{
+			return _validStateFiles.TryGetValue(path, out StateFileStamp known) && known == current;
+		}
+	}
+
+	private void RememberValidStateFile(string path)
+	{
+		try
+		{
+			FileInfo info = new FileInfo(path);
+			if (!info.Exists)
+			{
+				ForgetValidStateFile(path);
+				return;
+			}
+			StateFileStamp stamp = new StateFileStamp(info.Length, info.LastWriteTimeUtc.Ticks);
+			lock (_validStateGate)
+			{
+				_validStateFiles[path] = stamp;
+			}
+		}
+		catch (Exception ex) when (IsRecoverableStateException(ex))
+		{
+			ForgetValidStateFile(path);
+		}
+	}
+
+	private void ForgetValidStateFile(string path)
+	{
+		lock (_validStateGate)
+		{
+			_validStateFiles.Remove(path);
+		}
+	}
+
+	private readonly record struct StateFileStamp(long Length, long LastWriteTimeUtcTicks);
 
 	private void PreserveInvalidStateFile(string sourcePath, string label)
 	{

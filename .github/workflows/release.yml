@@ -1,9 +1,9 @@
-name: Build OfflineMusicLibrary 1.6.2
+name: Build OfflineMusicLibrary 1.6.3
 
 on:
   push:
     branches: [main]
-    tags: [v1.6.2]
+    tags: [v1.6.3]
   pull_request:
   workflow_dispatch:
 
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 1.6.2
+  RELEASE_VERSION: 1.6.3
 
 jobs:
   windows:
@@ -80,7 +80,7 @@ jobs:
         run: dotnet run --project tests/NetEaseCrossPlatformChecks/NetEaseCrossPlatformChecks.csproj -c Release
 
   release:
-    if: github.ref == 'refs/tags/v1.6.2'
+    if: github.ref == 'refs/tags/v1.6.3'
     needs: [windows, cross-platform-source]
     runs-on: ubuntu-latest
     steps:

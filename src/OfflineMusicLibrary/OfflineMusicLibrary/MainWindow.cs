@@ -139,6 +139,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 	private bool _suppressNavigation;
 
 	private bool _shuttingDown;
+	private bool _shutdownSaveCompleted;
 
 	private bool _refreshingMediaControls;
 
@@ -376,7 +377,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		}
 	}
 
-	private void Window_Closing(object? sender, CancelEventArgs e)
+	private async void Window_Closing(object? sender, CancelEventArgs e)
 	{
 		RememberCurrentPlayback();
 		if (!_forceExit && string.Equals(_state.CloseBehavior, "MinimizeToTray", StringComparison.OrdinalIgnoreCase))
@@ -393,18 +394,31 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			DiagnosticLog.Observe(_store.SaveAsync(_state), "STATE", "Could not save state while minimizing");
 			return;
 		}
-		_shuttingDown = true;
-		_scanCancellation?.Cancel();
-		_playerTimer.Stop();
-		_autoCloseTimer.Stop();
-		_stateSaveTimer.Stop();
-		_state.Volume = (int)VolumeSlider.Value;
-		try
+		if (!_shutdownSaveCompleted)
 		{
-			Task.Run(() => _store.SaveAsync(_state)).GetAwaiter().GetResult();
-		}
-		catch
-		{
+			e.Cancel = true;
+			if (_shuttingDown)
+			{
+				return;
+			}
+
+			_shuttingDown = true;
+			_scanCancellation?.Cancel();
+			_playerTimer.Stop();
+			_autoCloseTimer.Stop();
+			_stateSaveTimer.Stop();
+			_state.Volume = (int)VolumeSlider.Value;
+			try
+			{
+				await _store.SaveAsync(_state);
+			}
+			catch (Exception ex)
+			{
+				DiagnosticLog.Write("STATE", "Final state save failed during shutdown", ex);
+			}
+			_shutdownSaveCompleted = true;
+			Close();
+			return;
 		}
 		DisposeVinylAnimations();
 		_desktopLyrics?.Close();

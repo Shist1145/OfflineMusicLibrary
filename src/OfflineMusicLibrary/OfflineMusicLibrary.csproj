@@ -13,9 +13,9 @@
     <ApplicationIcon>Assets\OfflineMusicLibrary-logo.ico</ApplicationIcon>
     <Product>本地音乐库</Product>
     <Description>离线音乐管理、播放、歌单、封面与多语歌词工具</Description>
-    <Version>1.6.2</Version>
-    <FileVersion>1.6.2.0</FileVersion>
-    <AssemblyVersion>1.6.2.0</AssemblyVersion>
+    <Version>1.6.3</Version>
+    <FileVersion>1.6.3.0</FileVersion>
+    <AssemblyVersion>1.6.3.0</AssemblyVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Authors>Local Library User</Authors>
     <RepositoryUrl>https://github.com/Shist1145/OfflineMusicLibrary</RepositoryUrl>

@@ -87,7 +87,7 @@ public sealed partial class NetEasePlaylistService
 		_httpClient = httpClient;
 		if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
 		{
-			_httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 OfflineMusicLibrary/1.6.2");
+			_httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 OfflineMusicLibrary/1.6.3");
 		}
 		HttpRequestHeaders defaultRequestHeaders = _httpClient.DefaultRequestHeaders;
 		if ((object)defaultRequestHeaders.Referrer == null)

@@ -2,7 +2,7 @@
   <img src="src/OfflineMusicLibrary/Assets/OfflineMusicLibrary-logo.png" width="128" alt="OfflineMusicLibrary logo" />
 </p>
 
-# 本地音乐库 1.6.2 / OfflineMusicLibrary 1.6.2
+# 本地音乐库 1.6.3 / OfflineMusicLibrary 1.6.3
 
 [![Build and regression checks](https://github.com/Shist1145/OfflineMusicLibrary/actions/workflows/release.yml/badge.svg)](https://github.com/Shist1145/OfflineMusicLibrary/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/Shist1145/OfflineMusicLibrary?display_name=tag)](https://github.com/Shist1145/OfflineMusicLibrary/releases/latest)
@@ -11,13 +11,22 @@
 
 OfflineMusicLibrary 是一个以本地文件为准的离线音乐管理与播放工具。曲库索引、歌单、收藏、播放记录、歌词样式和播放器设置都保存在本机；应用不会要求登录音乐账号，也不会把个人曲库上传到服务器。
 
-> **1.6.2 是 Windows x64 完整版。** 已发布的 Linux/macOS 安装包仍是 [v1.4.0 跨平台预览版](https://github.com/Shist1145/OfflineMusicLibrary/releases/tag/v1.4.0)。跨平台源码已同步本次网易云大歌单与 Off Vocal 匹配修复，但界面和功能仍未与 Windows 完整版完全一致。
+> **1.6.3 是 Windows x64 完整版。** 已发布的 Linux/macOS 安装包仍是 [v1.4.0 跨平台预览版](https://github.com/Shist1145/OfflineMusicLibrary/releases/tag/v1.4.0)。跨平台源码已同步网易云大歌单与 Off Vocal 匹配修复，但界面和功能仍未与 Windows 完整版完全一致。
 
-OfflineMusicLibrary is a local-first music manager and player. Version 1.6.2 is the full Windows x64 release. The published Linux/macOS packages remain v1.4.0 previews, although their source now shares the safer NetEase playlist matching rules.
+OfflineMusicLibrary is a local-first music manager and player. Version 1.6.3 is the full Windows x64 release. The published Linux/macOS packages remain v1.4.0 previews, although their source shares the safer NetEase playlist matching rules.
 
-## 1.6.2 解决了什么
+## 1.6.3 解决了什么
 
-这次更新以“导入成功率”和“不要因为一次异常破坏已有数据”为核心。
+这次热修复首先解决 1.6.2 状态保存变慢、连续操作与退出时容易表现为无响应的问题，同时完整保留大歌单导入和多代恢复能力。
+
+- **状态保存恢复到接近 1.6.1 的速度。** 约 8.19 MB 的隔离副本从修复前 287–600 ms、约 36 MB 分配，降到约 31–48 ms、不到 0.21 MB 分配。
+- **退出不再同步堵住界面。** 最终状态保存改为异步完成；即使前方已有保存或磁盘暂时较慢，窗口消息循环仍可响应。
+- **状态文件自动瘦身。** 8 个纯界面显示字段不再为每首歌重复写入 JSON；旧状态可直接读取，下一次保存自动清理冗余内容。
+- **三代恢复没有因提速而缩水。** 仍使用临时落盘、进程内锁、跨保存方文件锁、有效来源检查、复制长度检查和原子替换。
+- **遗留临时文件会安全清理。** 启动时只删除超过一小时的旧状态临时文件，新鲜写入不会被碰触。
+- **加入大状态性能门槛。** 6,000 首、至少 4 MiB 的回归样本会检查保存耗时、内存分配、备份轮换和临时文件清理。
+
+1.6.2 引入的导入与数据安全修复继续保留：
 
 - **大型网易云歌单不再轻易少歌。** 100 首歌曲详情整批返回空时，会自动拆成 25 首小批次重试；即使详情接口暂时不完整，也会保留完整歌曲 ID，等待下一次继续补全。
 - **普通版与无人声版严格隔离。** `Off Vocal`、`Instrumental`、`伴奏`、`純音樂`、`無主唱`、`Backing Track`、日文オフボーカル等标记不会再被当作可以忽略的普通标题噪声。
@@ -70,7 +79,7 @@ OfflineMusicLibrary is a local-first music manager and player. Version 1.6.2 is 
 ## 下载与安装
 
 1. 打开 [GitHub Releases](https://github.com/Shist1145/OfflineMusicLibrary/releases)。
-2. 下载 `OfflineMusicLibrary-1.6.2-windows-x64.zip`。
+2. 下载 `OfflineMusicLibrary-1.6.3-windows-x64.zip`。
 3. 完整解压到一个可写目录，不要直接在压缩包内运行。
 4. 运行 `OfflineMusicLibrary.exe`。
 
@@ -78,7 +87,7 @@ Windows 包是自包含 x64 版本，不要求另行安装 .NET。LibVLC 运行�
 
 ### 从旧版本更新
 
-- 退出旧版后，解压 1.6.2 到新的程序目录。
+- 退出旧版后，解压 1.6.3 到新的程序目录。
 - 不需要复制 `%LOCALAPPDATA%\OfflineMusicLibrary`；新版本会继续读取原状态。
 - 建议保留旧程序目录几天，确认新版本正常后再手动删除。
 - 不要删除 `library-v2.json` 来解决界面问题；先查看日志和备份，必要时按 [数据恢复说明](docs/DATA_SAFETY.md) 操作。
@@ -134,7 +143,7 @@ dotnet build CrossPlatform/OfflineMusicLibrary.CrossPlatform.csproj -c Release
 - Windows 与跨平台网易云 700 首批次重试、Off Vocal 隔离和全局匹配
 - 歌单安全同步与维护
 - 推荐和播放历史导入
-- 单实例、播放恢复、状态轮换、损坏恢复和保存失败传播
+- 单实例、播放恢复、状态轮换、损坏恢复、保存失败传播和 6,000 首大状态性能门槛
 
 ## 仓库结构
 
@@ -142,6 +151,7 @@ dotnet build CrossPlatform/OfflineMusicLibrary.CrossPlatform.csproj -c Release
 src/OfflineMusicLibrary/     Windows WPF 完整版
 CrossPlatform/               Avalonia 跨平台预览源码
 tests/                       无个人数据的确定性回归检查
+tools/                       可选的状态加载/保存基准工具
 docs/                        导入与数据安全说明
 packaging/                   Linux/macOS 预览版打包资料
 .github/workflows/           构建、测试、发布和 SHA-256 工作流
@@ -150,7 +160,7 @@ packaging/                   Linux/macOS 预览版打包资料
 ## 当前边界
 
 - 这是本地播放器与迁移工具，不是网易云客户端，也不提供在线流媒体播放或歌曲下载。
-- 网易云公开接口可能临时限流或不返回部分详情；1.6.2 会保留 ID 和旧歌单内容，但无法凭空补出本地没有的媒体文件。
+- 网易云公开接口可能临时限流或不返回部分详情；1.6.3 会保留 ID 和旧歌单内容，但无法凭空补出本地没有的媒体文件。
 - Linux/macOS 已发布包仍是 1.4.0 预览版，缺少部分 Windows 播放页、桌面集成、歌词样式和稳定性设置。
 - 自动测试可以证明匹配、保存和状态迁移规则，但不能替代所有显卡、音频设备和桌面环境上的人工播放验收。
 

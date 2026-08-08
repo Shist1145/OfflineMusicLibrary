@@ -148,8 +148,10 @@ public sealed class TrackModel : INotifyPropertyChanged
 		}
 	}
 
+	[JsonIgnore]
 	public string DurationText => TimeSpan.FromMilliseconds(DurationMs).ToString((DurationMs >= 3600000) ? "h\\:mm\\:ss" : "m\\:ss");
 
+	[JsonIgnore]
 	public string TrackText
 	{
 		get
@@ -162,12 +164,16 @@ public sealed class TrackModel : INotifyPropertyChanged
 		}
 	}
 
+	[JsonIgnore]
 	public string CategoryText => string.Join(" / ", Categories);
 
+	[JsonIgnore]
 	public string LastPlayedText => LastPlayedAt?.ToString("yyyy-MM-dd HH:mm") ?? "-";
 
+	[JsonIgnore]
 	public string PlayCountText => $"{PlayCount:N0} 次";
 
+	[JsonIgnore]
 	public string MediaTypeText
 	{
 		get
@@ -184,6 +190,7 @@ public sealed class TrackModel : INotifyPropertyChanged
 		}
 	}
 
+	[JsonIgnore]
 	public string CircleText
 	{
 		get
@@ -196,6 +203,7 @@ public sealed class TrackModel : INotifyPropertyChanged
 		}
 	}
 
+	[JsonIgnore]
 	public string SearchText => $"{Title} {Artist} {Album} {AlbumArtist} {Circle} {Genre} {string.Join(' ', Categories)} {Path.GetFileNameWithoutExtension(FilePath)}".ToLowerInvariant();
 
 	public event PropertyChangedEventHandler? PropertyChanged;

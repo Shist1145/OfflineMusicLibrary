@@ -1,4 +1,5 @@
 using OfflineMusicLibrary;
+using System.Diagnostics;
 using System.Text.Json;
 
 static void Require(bool condition, string message)
@@ -255,7 +256,79 @@ try
 	Require(!Directory.EnumerateFiles(temporaryDirectory, "*.tmp").Any(),
 		"正常保存、失败保存与并发保存都不应遗留本次临时文件。");
 
-	Console.WriteLine("Single-instance, stability, rotating backup, failure propagation, and recovery checks passed.");
+	string serializedTrack = JsonSerializer.Serialize(new TrackModel
+	{
+		Id = "json-shape",
+		FilePath = @"C:\Music\json-shape.flac",
+		Title = "JSON Shape",
+		Artist = "Regression",
+		Album = "Stability"
+	});
+	foreach (string computedProperty in new[]
+	{
+		"DurationText",
+		"TrackText",
+		"CategoryText",
+		"LastPlayedText",
+		"PlayCountText",
+		"MediaTypeText",
+		"CircleText",
+		"SearchText"
+	})
+	{
+		Require(!serializedTrack.Contains($"\"{computedProperty}\"", StringComparison.Ordinal),
+			$"纯界面字段 {computedProperty} 不得写入状态文件。");
+	}
+
+	string performanceDirectory = Path.Combine(temporaryDirectory, "large-state");
+	Directory.CreateDirectory(performanceDirectory);
+	AppStore performanceStore = new(performanceDirectory);
+	AppState performanceState = new() { StateBackupEnabled = true };
+	string pathPadding = new('x', 360);
+	for (int index = 0; index < 6000; index++)
+	{
+		performanceState.Tracks.Add(new TrackModel
+		{
+			Id = $"large-{index}",
+			FilePath = $@"C:\Music\{pathPadding}\track-{index}.flac",
+			Title = $"Large state track {index}",
+			Artist = "State performance regression",
+			Album = "Large library",
+			AlbumArtist = "Regression suite",
+			Genre = "Test",
+			Format = "FLAC",
+			DurationMs = 240000,
+			Categories = ["Large", "Regression"]
+		});
+	}
+	await performanceStore.SaveAsync(performanceState);
+	await performanceStore.SaveAsync(performanceState);
+	long largeStateBytes = new FileInfo(performanceStore.StatePath).Length;
+	Require(largeStateBytes >= 4 * 1024 * 1024,
+		"大状态性能回归样本必须至少为 4 MiB，避免测试失去代表性。");
+	GC.Collect();
+	GC.WaitForPendingFinalizers();
+	GC.Collect();
+	long allocatedBefore = GC.GetTotalAllocatedBytes(precise: true);
+	Stopwatch saveStopwatch = Stopwatch.StartNew();
+	await performanceStore.SaveAsync(performanceState);
+	saveStopwatch.Stop();
+	long saveAllocatedBytes = GC.GetTotalAllocatedBytes(precise: true) - allocatedBefore;
+	Require(saveAllocatedBytes < largeStateBytes * 2,
+		$"大状态稳态保存分配过高：状态 {largeStateBytes:N0} 字节，分配 {saveAllocatedBytes:N0} 字节。");
+	Require(saveStopwatch.Elapsed < TimeSpan.FromSeconds(5),
+		$"大状态稳态保存耗时异常：{saveStopwatch.Elapsed.TotalMilliseconds:N0} ms。");
+
+	string staleTemporary = performanceStore.StatePath + ".123.stale.tmp";
+	string freshTemporary = performanceStore.StatePath + ".456.fresh.tmp";
+	await File.WriteAllTextAsync(staleTemporary, "stale");
+	await File.WriteAllTextAsync(freshTemporary, "fresh");
+	File.SetLastWriteTimeUtc(staleTemporary, DateTime.UtcNow.AddHours(-2));
+	_ = await new AppStore(performanceDirectory).LoadAsync();
+	Require(!File.Exists(staleTemporary) && File.Exists(freshTemporary),
+		"启动时只应清理超过一小时的遗留状态临时文件。");
+
+	Console.WriteLine($"Single-instance, stability, rotating backup, recovery, and large-state checks passed ({largeStateBytes:N0} bytes, {saveStopwatch.Elapsed.TotalMilliseconds:N1} ms, {saveAllocatedBytes:N0} allocated bytes).");
 }
 finally
 {
