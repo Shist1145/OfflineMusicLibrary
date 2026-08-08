@@ -13,6 +13,8 @@ public sealed record NetEaseImportResult(string PlaylistName, string PlaylistId,
 
 	public int FuzzyMatchCount { get; init; }
 
+	public int CorrectedCloudIdCount { get; init; }
+
 	public IReadOnlyList<string> UnresolvedTrackIds { get; init; } = Array.Empty<string>();
 
 	public IReadOnlyList<string> RemoteTrackIds { get; init; } = Array.Empty<string>();

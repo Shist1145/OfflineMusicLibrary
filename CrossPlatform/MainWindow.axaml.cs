@@ -228,9 +228,10 @@ public sealed partial class MainWindow : Window
                           $"网易云歌曲：{result.DeclaredTrackCount}{Environment.NewLine}" +
                           $"完整歌曲 ID：{result.TrackIdCount}{Environment.NewLine}" +
                           $"已读取详情：{result.ResolvedTrackCount}{Environment.NewLine}{Environment.NewLine}" +
-                          $"云 ID 精确匹配：{result.ExactMatchCount}{Environment.NewLine}" +
-                          $"名称/艺术家/专辑匹配：{result.FuzzyMatchCount}{Environment.NewLine}" +
-                          $"导入本地文件：{result.Matched.Count}{Environment.NewLine}" +
+                           $"云 ID 精确匹配：{result.ExactMatchCount}{Environment.NewLine}" +
+                           $"名称/艺术家/专辑匹配：{result.FuzzyMatchCount}{Environment.NewLine}" +
+                           $"修正历史错误云 ID：{result.CorrectedCloudIdCount}{Environment.NewLine}" +
+                           $"导入本地文件：{result.Matched.Count}{Environment.NewLine}" +
                           $"确实缺少或未匹配：{result.Missing.Count}";
             if (missing.Length > 0)
                 message += $"{Environment.NewLine}{Environment.NewLine}未匹配：{Environment.NewLine}{missing}";

@@ -34,7 +34,7 @@ public static class PlaylistMaintenance
 		IEnumerable<string> existingTrackIds,
 		IEnumerable<TrackModel> matchedTracks,
 		IReadOnlyCollection<string> remoteTrackIds,
-		bool hasCompleteTrackIds,
+		bool canPruneMissingRemoteTracks,
 		IEnumerable<TrackModel> library)
 	{
 		ArgumentNullException.ThrowIfNull(existingTrackIds);
@@ -57,7 +57,7 @@ public static class PlaylistMaintenance
 			}
 		}
 
-		HashSet<string>? currentRemoteIds = hasCompleteTrackIds
+		HashSet<string>? currentRemoteIds = canPruneMissingRemoteTracks
 			? remoteTrackIds.Where(id => !string.IsNullOrWhiteSpace(id)).ToHashSet(StringComparer.OrdinalIgnoreCase)
 			: null;
 		foreach (string existingId in existingTrackIds)

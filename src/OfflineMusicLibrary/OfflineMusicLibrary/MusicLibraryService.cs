@@ -29,37 +29,81 @@ public sealed class MusicLibraryService
 
 	private static readonly Regex NcmFileNameRegex = new Regex("^(?:\\d{1,3}(?:\\s*[.\\-_、]\\s*|\\s+))?(?<title>.+?)\\s+-\\s+(?<artist>.+)$", RegexOptions.Compiled);
 
-	public async Task<List<TrackModel>> ScanAsync(IReadOnlyCollection<string> roots, IReadOnlyCollection<TrackModel> existing, IProgress<ScanProgress>? progress = null, CancellationToken cancellationToken = default(CancellationToken))
+	private readonly record struct FileStamp(long Length, long LastWriteTimeUtcTicks);
+
+	public async Task<List<TrackModel>> ScanAsync(
+		IReadOnlyCollection<string> roots,
+		IReadOnlyCollection<TrackModel> existing,
+		IProgress<ScanProgress>? progress = null,
+		CancellationToken cancellationToken = default,
+		bool forceMetadataRefresh = false)
 	{
 		List<string> configuredRoots = NormalizeRoots(roots);
 		List<string> availableRoots = configuredRoots.Where(Directory.Exists).ToList();
 		List<string> protectedLocations = configuredRoots.Where((string root) => !Directory.Exists(root)).ToList();
-		List<string> files = availableRoots.SelectMany((string root) => EnumerateMediaFiles(root, protectedLocations)).Distinct<string>(StringComparer.OrdinalIgnoreCase)
-			.ToList();
+		List<string> files = await Task.Run(() => availableRoots
+			.SelectMany((string root) => EnumerateMediaFiles(root, protectedLocations, cancellationToken))
+			.Distinct<string>(StringComparer.OrdinalIgnoreCase)
+			.ToList(), cancellationToken);
+		cancellationToken.ThrowIfCancellationRequested();
 		Dictionary<string, TrackModel> existingById = existing.Where((TrackModel track) => !string.IsNullOrWhiteSpace(track.Id)).GroupBy<TrackModel, string>((TrackModel track) => track.Id, StringComparer.OrdinalIgnoreCase).ToDictionary<IGrouping<string, TrackModel>, string, TrackModel>((IGrouping<string, TrackModel> group) => group.Key, (IGrouping<string, TrackModel> group) => group.First(), StringComparer.OrdinalIgnoreCase);
 		ConcurrentBag<TrackModel> tracks = new ConcurrentBag<TrackModel>();
+		ConcurrentDictionary<string, string> coverSidecars = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 		int scanned = 0;
 		int errors = 0;
+		int reused = 0;
+		int refreshed = 0;
+		int added = 0;
 		await Parallel.ForEachAsync(files, new ParallelOptions
 		{
-			MaxDegreeOfParallelism = 4,
+			MaxDegreeOfParallelism = ResolveScanParallelism(availableRoots),
 			CancellationToken = cancellationToken
 		}, delegate(string path, CancellationToken token)
 		{
 			try
 			{
-				string text = CreateTrackId(path);
-				existingById.TryGetValue(text, out var value);
-				tracks.Add(ReadTrack(path, text, value));
+				token.ThrowIfCancellationRequested();
+				string id = CreateTrackId(path);
+				existingById.TryGetValue(id, out TrackModel? old);
+				FileStamp stamp = ReadFileStamp(path);
+				if (!forceMetadataRefresh && CanReuseMetadata(old, stamp))
+				{
+					tracks.Add(CloneCachedTrack(old!, path, stamp));
+					Interlocked.Increment(ref reused);
+				}
+				else
+				{
+					TrackModel refreshedTrack = ReadTrack(path, id, old, stamp, coverSidecars);
+					token.ThrowIfCancellationRequested();
+					tracks.Add(refreshedTrack);
+					if (old == null)
+					{
+						Interlocked.Increment(ref added);
+					}
+					else
+					{
+						Interlocked.Increment(ref refreshed);
+					}
+				}
 			}
 			catch (Exception exception) when (!token.IsCancellationRequested)
 			{
 				Interlocked.Increment(ref errors);
 				try
 				{
-					string text2 = CreateTrackId(path);
-					existingById.TryGetValue(text2, out var value2);
-					tracks.Add(ReadFallbackTrack(path, text2, value2));
+					string id = CreateTrackId(path);
+					existingById.TryGetValue(id, out TrackModel? old);
+					TrackModel fallback = ReadFallbackTrack(path, id, old, ReadFileStamp(path), coverSidecars);
+					token.ThrowIfCancellationRequested();
+					tracks.Add(fallback);
+					if (old == null)
+					{
+						Interlocked.Increment(ref added);
+					}
+					else
+					{
+						Interlocked.Increment(ref refreshed);
+					}
 					DiagnosticLog.Write("LibraryScan", "元数据读取失败，已按文件名收录：" + path, exception);
 				}
 				catch (Exception exception2)
@@ -77,6 +121,7 @@ public sealed class MusicLibraryService
 			}
 			return ValueTask.CompletedTask;
 		});
+		cancellationToken.ThrowIfCancellationRequested();
 		List<TrackModel> list = tracks.ToList();
 		protectedLocations = protectedLocations.Distinct<string>(StringComparer.OrdinalIgnoreCase).ToList();
 		List<TrackModel> existingInScannableLocations = existing.Where((TrackModel track) => IsPathWithinAnyRoot(track.FilePath, availableRoots) && !IsPathWithinAnyRoot(track.FilePath, protectedLocations)).ToList();
@@ -86,9 +131,85 @@ public sealed class MusicLibraryService
 		{
 			DiagnosticLog.Write("LibraryScan", $"Preserved {preserved} existing tracks because {protectedLocations.Count} configured or nested locations were unavailable.");
 		}
+		DiagnosticLog.Write("LibraryScan", $"Incremental scan completed: files={files.Count}, reused={reused}, refreshed={refreshed}, added={added}, fallbacks={errors}, parallelism={ResolveScanParallelism(availableRoots)}.");
 		return list.OrderBy<TrackModel, string>((TrackModel track) => track.Artist, StringComparer.CurrentCultureIgnoreCase).ThenBy<TrackModel, string>((TrackModel track) => track.Album, StringComparer.CurrentCultureIgnoreCase).ThenBy((TrackModel track) => track.TrackNumber)
 			.ThenBy<TrackModel, string>((TrackModel track) => track.Title, StringComparer.CurrentCultureIgnoreCase)
 			.ToList();
+	}
+
+	private static int ResolveScanParallelism(IReadOnlyCollection<string> roots)
+	{
+		foreach (string root in roots)
+		{
+			try
+			{
+				string? driveRoot = Path.GetPathRoot(root);
+				if (string.IsNullOrWhiteSpace(driveRoot))
+				{
+					continue;
+				}
+				DriveType driveType = new DriveInfo(driveRoot).DriveType;
+				if (driveType is DriveType.Network or DriveType.Removable or DriveType.CDRom)
+				{
+					return 1;
+				}
+			}
+			catch
+			{
+			}
+		}
+		return Math.Min(2, Math.Max(1, Environment.ProcessorCount));
+	}
+
+	private static FileStamp ReadFileStamp(string path)
+	{
+		FileInfo info = new FileInfo(path);
+		return new FileStamp(info.Length, info.LastWriteTimeUtc.Ticks);
+	}
+
+	private static bool CanReuseMetadata(TrackModel? old, FileStamp stamp)
+	{
+		if (old == null)
+		{
+			return false;
+		}
+		if (old.FileSize == 0 && old.LastWriteTimeUtcTicks == 0)
+		{
+			return true;
+		}
+		return old.FileSize == stamp.Length && old.LastWriteTimeUtcTicks == stamp.LastWriteTimeUtcTicks;
+	}
+
+	private static TrackModel CloneCachedTrack(TrackModel old, string path, FileStamp stamp)
+	{
+		return new TrackModel
+		{
+			Id = old.Id,
+			FilePath = path,
+			FileSize = stamp.Length,
+			LastWriteTimeUtcTicks = stamp.LastWriteTimeUtcTicks,
+			Title = old.Title,
+			Artist = old.Artist,
+			Album = old.Album,
+			AlbumArtist = old.AlbumArtist,
+			Circle = old.Circle,
+			CircleIsManual = old.CircleIsManual,
+			Genre = old.Genre,
+			Format = old.Format,
+			Year = old.Year,
+			TrackNumber = old.TrackNumber,
+			DurationMs = old.DurationMs,
+			HasCover = old.HasCover,
+			HasLyrics = old.HasLyrics,
+			IsVideo = old.IsVideo,
+			PlayCount = old.PlayCount,
+			LastPlayedAt = old.LastPlayedAt,
+			AddedAt = old.AddedAt,
+			Categories = old.Categories?.ToList() ?? new List<string>(),
+			CloudId = old.CloudId,
+			CloudIds = old.CloudIds?.ToList() ?? new List<string>(),
+			IsFavorite = old.IsFavorite
+		};
 	}
 
 	private static List<string> NormalizeRoots(IEnumerable<string> roots)
@@ -285,14 +406,19 @@ public sealed class MusicLibraryService
 
 	public static TrackModel ReadTrack(string path, TrackModel? old = null)
 	{
-		return ReadTrack(path, CreateTrackId(path), old);
+		return ReadTrack(path, CreateTrackId(path), old, ReadFileStamp(path), null);
 	}
 
-	private static TrackModel ReadTrack(string path, string id, TrackModel? old)
+	private static TrackModel ReadTrack(
+		string path,
+		string id,
+		TrackModel? old,
+		FileStamp stamp,
+		ConcurrentDictionary<string, string>? coverSidecars)
 	{
 		if (string.Equals(Path.GetExtension(path), ".ncm", StringComparison.OrdinalIgnoreCase))
 		{
-			return ReadNcmTrack(path, id, old);
+			return ReadNcmTrack(path, id, old, stamp, coverSidecars);
 		}
 		using TagLib.File file = TagLib.File.Create(path);
 		Tag tag = file.Tag;
@@ -304,6 +430,8 @@ public sealed class MusicLibraryService
 		TrackModel trackModel = new TrackModel();
 		trackModel.Id = id;
 		trackModel.FilePath = path;
+		trackModel.FileSize = stamp.Length;
+		trackModel.LastWriteTimeUtcTicks = stamp.LastWriteTimeUtcTicks;
 		trackModel.Title = title;
 		trackModel.Artist = artist;
 		trackModel.AlbumArtist = FirstNonEmpty(tag.FirstAlbumArtist, artist);
@@ -315,7 +443,7 @@ public sealed class MusicLibraryService
 		trackModel.TrackNumber = tag.Track;
 		trackModel.DurationMs = (long)file.Properties.Duration.TotalMilliseconds;
 		trackModel.Format = Path.GetExtension(path).TrimStart('.').ToUpperInvariant();
-		trackModel.HasCover = tag.Pictures.Length != 0 || CoverService.FindSidecar(path) != null;
+		trackModel.HasCover = tag.Pictures.Length != 0 || FindCoverSidecar(path, coverSidecars) != null;
 		trackModel.HasLyrics = hasLyrics;
 		trackModel.IsVideo = VideoExtensions.Contains(Path.GetExtension(path));
 		trackModel.PlayCount = old?.PlayCount ?? 0;
@@ -328,7 +456,12 @@ public sealed class MusicLibraryService
 		return trackModel;
 	}
 
-	private static TrackModel ReadNcmTrack(string path, string id, TrackModel? old)
+	private static TrackModel ReadNcmTrack(
+		string path,
+		string id,
+		TrackModel? old,
+		FileStamp stamp,
+		ConcurrentDictionary<string, string>? coverSidecars)
 	{
 		string fileName = Path.GetFileNameWithoutExtension(path).Trim();
 		Match match = NcmFileNameRegex.Match(fileName);
@@ -338,6 +471,8 @@ public sealed class MusicLibraryService
 		TrackModel trackModel = new TrackModel();
 		trackModel.Id = id;
 		trackModel.FilePath = path;
+		trackModel.FileSize = stamp.Length;
+		trackModel.LastWriteTimeUtcTicks = stamp.LastWriteTimeUtcTicks;
 		trackModel.Title = title;
 		trackModel.Artist = artist;
 		trackModel.AlbumArtist = FirstNonEmpty(old?.AlbumArtist, artist);
@@ -349,7 +484,7 @@ public sealed class MusicLibraryService
 		trackModel.TrackNumber = old?.TrackNumber ?? 0;
 		trackModel.DurationMs = old?.DurationMs ?? 0;
 		trackModel.Format = "NCM";
-		trackModel.HasCover = CoverService.FindSidecar(path) != null;
+		trackModel.HasCover = FindCoverSidecar(path, coverSidecars) != null;
 		trackModel.HasLyrics = LyricsService.FindMainLyricsPath(path) != null;
 		trackModel.IsVideo = false;
 		trackModel.PlayCount = old?.PlayCount ?? 0;
@@ -362,7 +497,12 @@ public sealed class MusicLibraryService
 		return trackModel;
 	}
 
-	private static TrackModel ReadFallbackTrack(string path, string id, TrackModel? old)
+	private static TrackModel ReadFallbackTrack(
+		string path,
+		string id,
+		TrackModel? old,
+		FileStamp stamp,
+		ConcurrentDictionary<string, string>? coverSidecars)
 	{
 		string fileName = Path.GetFileNameWithoutExtension(path).Trim();
 		Match match = NcmFileNameRegex.Match(fileName);
@@ -372,6 +512,8 @@ public sealed class MusicLibraryService
 		TrackModel trackModel = new TrackModel();
 		trackModel.Id = id;
 		trackModel.FilePath = path;
+		trackModel.FileSize = stamp.Length;
+		trackModel.LastWriteTimeUtcTicks = stamp.LastWriteTimeUtcTicks;
 		trackModel.Title = FirstNonEmpty(old?.Title, title, fileName);
 		trackModel.Artist = artist;
 		trackModel.AlbumArtist = FirstNonEmpty(old?.AlbumArtist, artist);
@@ -383,7 +525,7 @@ public sealed class MusicLibraryService
 		trackModel.TrackNumber = old?.TrackNumber ?? 0;
 		trackModel.DurationMs = old?.DurationMs ?? 0;
 		trackModel.Format = extension.TrimStart('.').ToUpperInvariant();
-		trackModel.HasCover = SafeHasCover(path);
+		trackModel.HasCover = SafeHasCover(path, coverSidecars);
 		trackModel.HasLyrics = SafeHasLyrics(path);
 		trackModel.IsVideo = VideoExtensions.Contains(extension);
 		trackModel.PlayCount = old?.PlayCount ?? 0;
@@ -396,11 +538,26 @@ public sealed class MusicLibraryService
 		return trackModel;
 	}
 
-	private static bool SafeHasCover(string path)
+	private static string? FindCoverSidecar(string path, ConcurrentDictionary<string, string>? coverSidecars)
+	{
+		if (coverSidecars == null)
+		{
+			return CoverService.FindSidecar(path);
+		}
+		string? directory = Path.GetDirectoryName(path);
+		if (string.IsNullOrWhiteSpace(directory))
+		{
+			return null;
+		}
+		string cached = coverSidecars.GetOrAdd(directory, _ => CoverService.FindSidecar(path) ?? string.Empty);
+		return cached.Length == 0 ? null : cached;
+	}
+
+	private static bool SafeHasCover(string path, ConcurrentDictionary<string, string>? coverSidecars)
 	{
 		try
 		{
-			return CoverService.FindSidecar(path) != null;
+			return FindCoverSidecar(path, coverSidecars) != null;
 		}
 		catch
 		{
@@ -502,12 +659,16 @@ public sealed class MusicLibraryService
 		return flag;
 	}
 
-	private static IEnumerable<string> EnumerateMediaFiles(string root, ICollection<string>? failedDirectories = null)
+	private static IEnumerable<string> EnumerateMediaFiles(
+		string root,
+		ICollection<string>? failedDirectories = null,
+		CancellationToken cancellationToken = default)
 	{
 		Stack<string> pending = new Stack<string>();
 		pending.Push(root);
 		while (pending.Count > 0)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			string directory = pending.Pop();
 			string[] childDirectories;
 			string[] files;
@@ -525,6 +686,7 @@ public sealed class MusicLibraryService
 			string[] array = childDirectories;
 			foreach (string child in array)
 			{
+				cancellationToken.ThrowIfCancellationRequested();
 				if (!SkippedDirectories.Contains(Path.GetFileName(child)))
 				{
 					pending.Push(child);
@@ -533,6 +695,7 @@ public sealed class MusicLibraryService
 			string[] array2 = files;
 			foreach (string file in array2)
 			{
+				cancellationToken.ThrowIfCancellationRequested();
 				if (SupportedExtensions.Contains(Path.GetExtension(file)))
 				{
 					yield return file;

@@ -19,6 +19,10 @@ public sealed class TrackModel : INotifyPropertyChanged
 
 	public string FilePath { get; set; } = "";
 
+	public long FileSize { get; set; }
+
+	public long LastWriteTimeUtcTicks { get; set; }
+
 	public string Title { get; set; } = "";
 
 	public string Artist { get; set; } = "未知艺术家";
@@ -229,6 +233,22 @@ public sealed class TrackModel : INotifyPropertyChanged
 				(CloudIds ?? (CloudIds = new List<string>())).Add(id);
 			}
 		}
+	}
+
+	public bool ForgetCloudId(string id)
+	{
+		if (string.IsNullOrWhiteSpace(id) || !HasCloudId(id))
+		{
+			return false;
+		}
+
+		List<string> remaining = GetCloudIds()
+			.Where(candidate => !string.Equals(candidate, id, StringComparison.OrdinalIgnoreCase))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToList();
+		CloudId = remaining.FirstOrDefault();
+		CloudIds = remaining.Skip(1).ToList();
+		return true;
 	}
 
 	private void OnPropertyChanged([CallerMemberName] string? propertyName = null)

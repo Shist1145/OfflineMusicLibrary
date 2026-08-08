@@ -23,6 +23,8 @@ public sealed class AppStore
 
 	public string StateBackupPath => Path.Combine(DataDirectory, "library-v2.backup.json");
 
+	public string StatePreviousPath => Path.Combine(DataDirectory, "library-v2.previous.json");
+
 	public string StateWriteLockPath => Path.Combine(DataDirectory, "library-v2.write.lock");
 
 	public string LegacyStatePath => Path.Combine(DataDirectory, "library.json");
@@ -39,13 +41,13 @@ public sealed class AppStore
 	public async Task<AppState> LoadAsync()
 	{
 		Directory.CreateDirectory(DataDirectory);
-		AppState? current = await TryLoadStatePairAsync(StatePath, StateBackupPath, "新版");
+		AppState? current = await TryLoadStateFilesAsync("新版", StatePath, StateBackupPath, StatePreviousPath);
 		if (current != null)
 		{
 			return current;
 		}
 
-		AppState? legacy = await TryLoadStatePairAsync(LegacyStatePath, LegacyStateBackupPath, "旧版");
+		AppState? legacy = await TryLoadStateFilesAsync("旧版", LegacyStatePath, LegacyStateBackupPath);
 		if (legacy != null)
 		{
 			legacy.StateFormatVersion = 2;
@@ -56,57 +58,71 @@ public sealed class AppStore
 		return CreateDefaultState();
 	}
 
-	private async Task<AppState?> TryLoadStatePairAsync(string primaryPath, string backupPath, string label)
+	private async Task<AppState?> TryLoadStateFilesAsync(string label, params string[] paths)
 	{
-		if (File.Exists(primaryPath))
+		for (int index = 0; index < paths.Length; index++)
 		{
+			string path = paths[index];
+			if (!File.Exists(path))
+			{
+				continue;
+			}
 			try
 			{
-				return await LoadStateFileAsync(primaryPath);
+				AppState state = await LoadStateFileAsync(path);
+				if (index > 0)
+				{
+					DiagnosticLog.Write("STATE", $"已从{label}状态第 {index} 级备份恢复曲库与设置：{Path.GetFileName(path)}");
+				}
+				return state;
 			}
 			catch (Exception ex) when (IsRecoverableStateException(ex))
 			{
-				DiagnosticLog.Write("STATE", $"{label}主状态文件无效，正在尝试备份", ex);
-				PreserveInvalidStateFile(primaryPath, label);
-			}
-		}
-		if (File.Exists(backupPath))
-		{
-			try
-			{
-				AppState recovered = await LoadStateFileAsync(backupPath);
-				DiagnosticLog.Write("STATE", $"已从{label}状态备份恢复曲库与设置");
-				return recovered;
-			}
-			catch (Exception ex) when (IsRecoverableStateException(ex))
-			{
-				DiagnosticLog.Write("STATE", $"{label}状态备份也无效", ex);
+				DiagnosticLog.Write("STATE", $"{label}状态文件无效：{Path.GetFileName(path)}", ex);
+				if (index == 0)
+				{
+					PreserveInvalidStateFile(path, label);
+				}
 			}
 		}
 		return null;
 	}
 
-	public async Task SaveAsync(AppState state)
+	public async Task SaveAsync(AppState state, CancellationToken cancellationToken = default)
 	{
-		await _writeLock.WaitAsync();
+		ArgumentNullException.ThrowIfNull(state);
+		await _writeLock.WaitAsync(cancellationToken);
 		string temporary = StatePath + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
 		try
 		{
 			Directory.CreateDirectory(DataDirectory);
-			await using FileStream stateWriteLock = await AcquireStateWriteLockAsync();
-			await using (FileStream stream = File.Create(temporary))
-			{
-				await JsonSerializer.SerializeAsync((Stream)stream, state, _options, default(CancellationToken));
-			}
-			await MoveWithRetryAsync(temporary, StatePath);
+			await using FileStream stateWriteLock = await AcquireStateWriteLockAsync(cancellationToken);
+			await WriteValidatedTemporaryStateAsync(temporary, state, cancellationToken);
+
+			bool primaryWasValid = await IsValidStateFileAsync(StatePath, cancellationToken);
 			if (state.StateBackupEnabled)
 			{
-				await TryRefreshBackupAsync();
+				bool backupWasValid = await IsValidStateFileAsync(StateBackupPath, cancellationToken);
+				if (backupWasValid)
+				{
+					await CopyValidatedFileAsync(StateBackupPath, StatePreviousPath, cancellationToken);
+				}
+				if (primaryWasValid)
+				{
+					await CopyValidatedFileAsync(StatePath, StateBackupPath, cancellationToken);
+				}
+			}
+
+			await MoveWithRetryAsync(temporary, StatePath, cancellationToken);
+			if (state.StateBackupEnabled && !await IsValidStateFileAsync(StateBackupPath, cancellationToken))
+			{
+				await CopyValidatedFileAsync(StatePath, StateBackupPath, cancellationToken);
 			}
 		}
 		catch (Exception ex) when (IsRecoverableStateException(ex))
 		{
 			DiagnosticLog.Write("STATE", "状态保存失败；已保留上一次完整文件", ex);
+			throw;
 		}
 		finally
 		{
@@ -124,42 +140,69 @@ public sealed class AppStore
 		}
 	}
 
-	private async Task<AppState> LoadStateFileAsync(string path)
+	private async Task WriteValidatedTemporaryStateAsync(string path, AppState state, CancellationToken cancellationToken)
 	{
-		await using FileStream stream = File.OpenRead(path);
-		AppState state = (await JsonSerializer.DeserializeAsync<AppState>((Stream)stream, _options, default(CancellationToken))) ?? throw new JsonException("状态文件内容为空。");
+		await using (FileStream stream = new FileStream(
+			path,
+			FileMode.CreateNew,
+			FileAccess.Write,
+			FileShare.None,
+			64 * 1024,
+			FileOptions.Asynchronous | FileOptions.WriteThrough))
+		{
+			await JsonSerializer.SerializeAsync(stream, state, _options, cancellationToken);
+			await stream.FlushAsync(cancellationToken);
+			stream.Flush(flushToDisk: true);
+		}
+		_ = await LoadStateFileAsync(path, cancellationToken);
+	}
+
+	private async Task<AppState> LoadStateFileAsync(string path, CancellationToken cancellationToken = default)
+	{
+		await using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+		AppState state = (await JsonSerializer.DeserializeAsync<AppState>(stream, _options, cancellationToken)) ?? throw new JsonException("状态文件内容为空。");
 		Normalize(state);
 		return state;
 	}
 
-	private async Task TryRefreshBackupAsync()
+	private async Task<bool> IsValidStateFileAsync(string path, CancellationToken cancellationToken)
 	{
-		string temporaryBackup = StateBackupPath + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+		if (!File.Exists(path))
+		{
+			return false;
+		}
 		try
 		{
-			File.Copy(StatePath, temporaryBackup, overwrite: true);
-			await MoveWithRetryAsync(temporaryBackup, StateBackupPath);
+			_ = await LoadStateFileAsync(path, cancellationToken);
+			return true;
 		}
 		catch (Exception ex) when (IsRecoverableStateException(ex))
 		{
-			DiagnosticLog.Write("STATE", "Could not refresh state backup", ex);
-			try
-			{
-				if (File.Exists(temporaryBackup))
-				{
-					File.Delete(temporaryBackup);
-				}
-			}
-			catch
-			{
-			}
+			DiagnosticLog.Write("STATE", $"状态轮换时跳过无效文件：{Path.GetFileName(path)}", ex);
+			return false;
 		}
 	}
 
-	private static async Task MoveWithRetryAsync(string source, string destination)
+	private async Task CopyValidatedFileAsync(string source, string destination, CancellationToken cancellationToken)
+	{
+		string temporary = destination + $".{Environment.ProcessId}.{Guid.NewGuid():N}.tmp";
+		try
+		{
+			File.Copy(source, temporary, overwrite: false);
+			_ = await LoadStateFileAsync(temporary, cancellationToken);
+			await MoveWithRetryAsync(temporary, destination, cancellationToken);
+		}
+		finally
+		{
+			TryDeleteTemporaryFile(temporary);
+		}
+	}
+
+	private static async Task MoveWithRetryAsync(string source, string destination, CancellationToken cancellationToken)
 	{
 		for (int attempt = 0; ; attempt++)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			try
 			{
 				File.Move(source, destination, overwrite: true);
@@ -167,12 +210,12 @@ public sealed class AppStore
 			}
 			catch (Exception ex) when (attempt < 2 && (ex is IOException || ex is UnauthorizedAccessException))
 			{
-				await Task.Delay(120);
+				await Task.Delay(120, cancellationToken);
 			}
 		}
 	}
 
-	private async Task<FileStream> AcquireStateWriteLockAsync()
+	private async Task<FileStream> AcquireStateWriteLockAsync(CancellationToken cancellationToken)
 	{
 		for (int attempt = 0; ; attempt++)
 		{
@@ -182,8 +225,22 @@ public sealed class AppStore
 			}
 			catch (IOException) when (attempt < 200)
 			{
-				await Task.Delay(50);
+				await Task.Delay(50, cancellationToken);
 			}
+		}
+	}
+
+	private static void TryDeleteTemporaryFile(string path)
+	{
+		try
+		{
+			if (File.Exists(path))
+			{
+				File.Delete(path);
+			}
+		}
+		catch
+		{
 		}
 	}
 

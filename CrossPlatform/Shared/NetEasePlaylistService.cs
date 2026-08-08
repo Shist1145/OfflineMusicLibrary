@@ -11,6 +11,7 @@ public sealed partial class NetEasePlaylistService
 {
     private const int TrackDetailBatchSize = 100;
     private const int SmallRetryBatchSize = 25;
+    private const int PlayablePreferenceBonus = 140;
     private const int PlaylistRequestAttempts = 3;
     private readonly HttpClient _httpClient;
 
@@ -22,7 +23,7 @@ public sealed partial class NetEasePlaylistService
     {
         _httpClient = httpClient;
         if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
-            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 OfflineMusicLibrary/1.2");
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 OfflineMusicLibrary/1.4.0");
         _httpClient.DefaultRequestHeaders.Referrer ??= new Uri("https://music.163.com/");
     }
 
@@ -59,13 +60,14 @@ public sealed partial class NetEasePlaylistService
 
         var matchResult = await Task.Run(() => MatchTracks(remoteTracks, localTracks), cancellationToken);
         var missing = remoteTracks
-            .Where(track => !matchResult.MatchedRemoteIds.Contains(track.Id))
+            .Where(track => !string.IsNullOrWhiteSpace(track.Title) && !matchResult.MatchedRemoteIds.Contains(track.Id))
             .ToList();
         var declared = Math.Max(declaredTrackCount, Math.Max(trackIds.Count, remoteTracks.Count));
 
         DiagnosticLog.Write("NetEaseImport",
             $"歌单={playlistName}({playlistId})，声明={declared}，ID={trackIds.Count}，详情={resolvedIds.Count}，" +
-            $"精确={matchResult.ExactCount}，模糊={matchResult.FuzzyCount}，未匹配={missing.Count}");
+            $"详情暂缺={unresolvedTrackIds.Count}，精确={matchResult.ExactCount}，模糊={matchResult.FuzzyCount}，" +
+            $"修正旧云ID={matchResult.CorrectedCloudIdCount}，未匹配={missing.Count}");
 
         return new NetEaseImportResult(
             playlistName,
@@ -79,7 +81,9 @@ public sealed partial class NetEasePlaylistService
             ResolvedTrackCount = resolvedIds.Count,
             ExactMatchCount = matchResult.ExactCount,
             FuzzyMatchCount = matchResult.FuzzyCount,
-            UnresolvedTrackIds = unresolvedTrackIds
+            CorrectedCloudIdCount = matchResult.CorrectedCloudIdCount,
+            UnresolvedTrackIds = unresolvedTrackIds,
+            RemoteTrackIds = trackIds
         };
     }
 
@@ -163,7 +167,7 @@ public sealed partial class NetEasePlaylistService
                 result[track.Id] = track;
 
             var unresolved = batch.Where(id => !result.ContainsKey(id)).ToArray();
-            if (fetched.Count == 0 || unresolved.Length == 0)
+            if (unresolved.Length == 0)
                 continue;
 
             // A partially successful large request is commonly a gateway/query-length issue.
@@ -171,6 +175,11 @@ public sealed partial class NetEasePlaylistService
             foreach (var smallBatch in unresolved.Chunk(SmallRetryBatchSize))
             foreach (var track in await FetchTrackGroupAsync(smallBatch, attempts: 2, cancellationToken))
                 result[track.Id] = track;
+
+            unresolved = batch.Where(id => !result.ContainsKey(id)).ToArray();
+            if (unresolved.Length > 0)
+                DiagnosticLog.Write("NetEaseImport",
+                    $"歌曲详情小批重试后仍缺少 {unresolved.Length}/{batch.Length} 首；保留歌曲 ID，等待下次导入继续补全。");
         }
 
         return trackIds.Where(result.ContainsKey).Select(id => result[id]).ToList();
@@ -273,136 +282,248 @@ public sealed partial class NetEasePlaylistService
         var title = GetString(track, "name") ?? "未知歌曲";
         var artists = ReadArtistNames(track);
         var album = ReadAlbumName(track);
-        return new NetEaseTrack(id, title, artists, album);
+        var durationMs = ReadLong(track, "dt");
+        if (durationMs <= 0)
+            durationMs = ReadLong(track, "duration");
+        return new NetEaseTrack(id, title, artists, album, durationMs);
     }
 
     private static MatchResult MatchTracks(IReadOnlyList<NetEaseTrack> remote, IReadOnlyList<TrackModel> local)
     {
-        var candidates = local.Select(LocalMatchCandidate.Create).ToList();
-        var byCloudId = local
-            .SelectMany(track => track.GetCloudIds().Select(id => new { Id = id, Track = track }))
-            .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Select(item => item.Track).Distinct().ToList(),
+        var uniqueLocal = local
+            .Where(track => track is not null && !string.IsNullOrWhiteSpace(track.Id))
+            .GroupBy(track => track.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(track => track.IsEncryptedNcm).First())
+            .ToList();
+        var candidates = uniqueLocal.Select(LocalMatchCandidate.Create).ToList();
+        var byCloudId = candidates
+            .SelectMany((candidate, localIndex) =>
+                candidate.Track.GetCloudIds().Select(id => new { id, localIndex }))
+            .GroupBy(item => item.id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(item => item.localIndex).Distinct().ToList(),
                 StringComparer.OrdinalIgnoreCase);
-        var assignments = new TrackModel?[remote.Count];
+
+        var assignments = Enumerable.Repeat(-1, remote.Count).ToArray();
+        var localOwners = Enumerable.Repeat(-1, candidates.Count).ToArray();
         var exactAssignments = new bool[remote.Count];
-        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Reserve every trustworthy ID hit before fuzzy matching. Otherwise an early fuzzy
-        // candidate can steal the file required by a later exact playlist entry.
-        for (var index = 0; index < remote.Count; index++)
+        var exactOptions = new Dictionary<int, List<MatchOption>>();
+        for (var remoteIndex = 0; remoteIndex < remote.Count; remoteIndex++)
         {
-            var remoteTrack = remote[index];
-            if (!byCloudId.TryGetValue(remoteTrack.Id, out var idMatches))
+            var remoteTrack = remote[remoteIndex];
+            if (string.IsNullOrWhiteSpace(remoteTrack.Id) ||
+                !byCloudId.TryGetValue(remoteTrack.Id, out var knownLocalIndexes))
                 continue;
 
-            var exact = idMatches
-                .Where(track => !used.Contains(track.Id))
-                .Select(track => new
-                {
-                    Track = track,
-                    Score = string.IsNullOrWhiteSpace(remoteTrack.Title)
-                        ? 1
-                        : MatchScore(LocalMatchCandidate.Create(track), remoteTrack)
-                })
-                .Where(item => item.Score > 0)
-                .OrderBy(item => item.Track.IsEncryptedNcm)
-                .ThenByDescending(item => item.Score)
-                .Select(item => item.Track)
-                .FirstOrDefault();
-            if (exact is null)
-                continue;
-
-            assignments[index] = exact;
-            exactAssignments[index] = true;
-            used.Add(exact.Id);
-        }
-
-        for (var index = 0; index < remote.Count; index++)
-        {
-            var existing = assignments[index];
-            if (existing is not null && !existing.IsEncryptedNcm)
-                continue;
-
-            var ranked = candidates
-                .Where(candidate => !used.Contains(candidate.Track.Id))
-                .Select(candidate => new
-                {
-                    candidate.Track,
-                    Score = MatchScore(candidate, remote[index])
-                })
-                .Where(item => item.Score > 0)
-                .OrderByDescending(item => item.Score)
+            var options = knownLocalIndexes
+                .Select(localIndex => new MatchOption(localIndex,
+                    KnownIdMatchScore(candidates[localIndex], remoteTrack)))
+                .Where(option => option.Score > 0)
+                .OrderByDescending(option => option.Score)
+                .ThenBy(option => option.LocalIndex)
                 .ToList();
-            if (ranked.Count == 0)
+            if (options.Count > 0)
+                exactOptions[remoteIndex] = options;
+        }
+        AssignOptions(exactOptions, assignments, localOwners, exactAssignments);
+        foreach (var remoteIndex in exactOptions.Keys)
+            exactAssignments[remoteIndex] = assignments[remoteIndex] >= 0;
+
+        var fuzzyOptions = new Dictionary<int, List<MatchOption>>();
+        for (var remoteIndex = 0; remoteIndex < remote.Count; remoteIndex++)
+        {
+            if (assignments[remoteIndex] >= 0)
                 continue;
 
-            var best = ranked[0];
-            var playable = ranked.FirstOrDefault(item =>
-                !item.Track.IsEncryptedNcm && item.Score >= best.Score - 140);
-            var fuzzy = playable?.Track ?? best.Track;
-            if (existing is not null && fuzzy.IsEncryptedNcm)
+            var remoteTrack = remote[remoteIndex];
+            var options = candidates
+                .Select((candidate, localIndex) => new
+                {
+                    Candidate = candidate,
+                    LocalIndex = localIndex,
+                    RawScore = localOwners[localIndex] >= 0 ? 0 : MatchScore(candidate, remoteTrack)
+                })
+                .Where(item => item.RawScore > 0)
+                .Select(item => new MatchOption(
+                    item.LocalIndex,
+                    item.RawScore + (item.Candidate.Track.IsEncryptedNcm ? 0 : PlayablePreferenceBonus) -
+                    (item.Candidate.Track.HasCloudIds && !item.Candidate.Track.HasCloudId(remoteTrack.Id) ? 30 : 0)))
+                .OrderByDescending(option => option.Score)
+                .ThenBy(option => option.LocalIndex)
+                .ToList();
+            if (options.Count > 0)
+                fuzzyOptions[remoteIndex] = options;
+        }
+        AssignOptions(fuzzyOptions, assignments, localOwners, exactAssignments);
+
+        for (var remoteIndex = 0; remoteIndex < remote.Count; remoteIndex++)
+        {
+            var existingLocalIndex = assignments[remoteIndex];
+            if (existingLocalIndex < 0 ||
+                !candidates[existingLocalIndex].Track.IsEncryptedNcm ||
+                string.IsNullOrWhiteSpace(remote[remoteIndex].Title))
                 continue;
 
-            if (existing is not null)
-                used.Remove(existing.Id);
-            assignments[index] = fuzzy;
-            exactAssignments[index] = false;
-            used.Add(fuzzy.Id);
+            var currentScore = MatchScore(candidates[existingLocalIndex], remote[remoteIndex]);
+            var playable = candidates
+                .Select((candidate, localIndex) => new MatchOption(
+                    localIndex,
+                    localOwners[localIndex] < 0 && !candidate.Track.IsEncryptedNcm
+                        ? MatchScore(candidate, remote[remoteIndex])
+                        : 0))
+                .Where(option => option.Score > 0 && option.Score >= currentScore - PlayablePreferenceBonus)
+                .OrderByDescending(option => option.Score)
+                .ThenBy(option => option.LocalIndex)
+                .FirstOrDefault();
+            if (playable is null)
+                continue;
+
+            localOwners[existingLocalIndex] = -1;
+            assignments[remoteIndex] = playable.LocalIndex;
+            localOwners[playable.LocalIndex] = remoteIndex;
+            exactAssignments[remoteIndex] = false;
         }
 
         var tracks = new List<TrackModel>();
         var matchedRemoteIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var exactCount = 0;
         var fuzzyCount = 0;
-        for (var index = 0; index < assignments.Length; index++)
+        var correctedCloudIdCount = 0;
+        for (var remoteIndex = 0; remoteIndex < assignments.Length; remoteIndex++)
         {
-            var match = assignments[index];
-            if (match is null)
+            var localIndex = assignments[remoteIndex];
+            if (localIndex < 0)
                 continue;
 
-            match.RememberCloudId(remote[index].Id);
+            var match = candidates[localIndex].Track;
+            if (!string.IsNullOrWhiteSpace(remote[remoteIndex].Title))
+            {
+                foreach (var staleOwner in local.Where(track =>
+                             !ReferenceEquals(track, match) && track.HasCloudId(remote[remoteIndex].Id)))
+                {
+                    if (staleOwner.ForgetCloudId(remote[remoteIndex].Id))
+                        correctedCloudIdCount++;
+                }
+            }
+            match.RememberCloudId(remote[remoteIndex].Id);
             tracks.Add(match);
-            matchedRemoteIds.Add(remote[index].Id);
-            if (exactAssignments[index])
+            matchedRemoteIds.Add(remote[remoteIndex].Id);
+            if (exactAssignments[remoteIndex])
                 exactCount++;
             else
                 fuzzyCount++;
         }
 
-        return new MatchResult(tracks, matchedRemoteIds, exactCount, fuzzyCount);
+        return new MatchResult(tracks, matchedRemoteIds, exactCount, fuzzyCount, correctedCloudIdCount);
+    }
+
+    private static int KnownIdMatchScore(LocalMatchCandidate candidate, NetEaseTrack remoteTrack)
+    {
+        if (string.IsNullOrWhiteSpace(remoteTrack.Title))
+            return 1_000_000 + (candidate.Track.IsEncryptedNcm ? 0 : PlayablePreferenceBonus);
+        if (candidate.IsInstrumental != HasInstrumentalMarker([remoteTrack.Title]))
+            return 0;
+        var score = Math.Max(1, MatchScore(candidate, remoteTrack));
+        return 1_000_000 + score + (candidate.Track.IsEncryptedNcm ? 0 : PlayablePreferenceBonus);
+    }
+
+    private static void AssignOptions(
+        IReadOnlyDictionary<int, List<MatchOption>> optionsByRemote,
+        int[] assignments,
+        int[] localOwners,
+        bool[] lockedRemoteAssignments)
+    {
+        foreach (var remoteIndex in optionsByRemote
+                     .OrderBy(pair => pair.Value.Count)
+                     .ThenByDescending(pair => pair.Value.Count == 0 ? 0 : pair.Value[0].Score)
+                     .Select(pair => pair.Key))
+        {
+            var visitedLocal = new bool[localOwners.Length];
+            TryAssign(remoteIndex, optionsByRemote, assignments, localOwners,
+                lockedRemoteAssignments, visitedLocal, []);
+        }
+    }
+
+    private static bool TryAssign(
+        int remoteIndex,
+        IReadOnlyDictionary<int, List<MatchOption>> optionsByRemote,
+        int[] assignments,
+        int[] localOwners,
+        bool[] lockedRemoteAssignments,
+        bool[] visitedLocal,
+        HashSet<int> visitingRemote)
+    {
+        if (!visitingRemote.Add(remoteIndex) ||
+            !optionsByRemote.TryGetValue(remoteIndex, out var options))
+            return false;
+
+        foreach (var option in options)
+        {
+            if (visitedLocal[option.LocalIndex])
+                continue;
+            visitedLocal[option.LocalIndex] = true;
+            var owner = localOwners[option.LocalIndex];
+            if (owner >= 0 &&
+                (lockedRemoteAssignments[owner] ||
+                 !TryAssign(owner, optionsByRemote, assignments, localOwners,
+                     lockedRemoteAssignments, visitedLocal, visitingRemote)))
+                continue;
+
+            var oldLocalIndex = assignments[remoteIndex];
+            assignments[remoteIndex] = option.LocalIndex;
+            localOwners[option.LocalIndex] = remoteIndex;
+            if (oldLocalIndex >= 0 && oldLocalIndex != option.LocalIndex &&
+                localOwners[oldLocalIndex] == remoteIndex)
+                localOwners[oldLocalIndex] = -1;
+            visitingRemote.Remove(remoteIndex);
+            return true;
+        }
+
+        visitingRemote.Remove(remoteIndex);
+        return false;
     }
 
     private sealed record MatchResult(
         IReadOnlyList<TrackModel> Tracks,
         HashSet<string> MatchedRemoteIds,
         int ExactCount,
-        int FuzzyCount);
+        int FuzzyCount,
+        int CorrectedCloudIdCount);
+
+    private sealed record MatchOption(int LocalIndex, int Score);
 
     private sealed class LocalMatchCandidate
     {
-        private LocalMatchCandidate(TrackModel track, IReadOnlyList<string> titleVariants)
+        private LocalMatchCandidate(TrackModel track, IReadOnlyList<string> titleVariants, bool isInstrumental)
         {
             Track = track;
             TitleVariants = titleVariants;
             Artist = $"{track.Artist} / {track.AlbumArtist}";
             Album = track.Album;
+            IsInstrumental = isInstrumental;
         }
 
         public TrackModel Track { get; }
         public IReadOnlyList<string> TitleVariants { get; }
         public string Artist { get; }
         public string Album { get; }
+        public bool IsInstrumental { get; }
+        public long DurationMs => Track.DurationMs;
 
         public static LocalMatchCandidate Create(TrackModel track)
         {
             string?[] values = [track.Title, Path.GetFileNameWithoutExtension(track.FilePath)];
-            return new LocalMatchCandidate(track, BuildTitleVariants(values));
+            return new LocalMatchCandidate(track, BuildTitleVariants(values), HasInstrumentalMarker(values));
         }
     }
 
     private static int MatchScore(LocalMatchCandidate candidate, NetEaseTrack remoteTrack)
     {
+        if (candidate.IsInstrumental != HasInstrumentalMarker([remoteTrack.Title]))
+            return 0;
+
         var remoteTitles = BuildTitleVariants(new string?[] { remoteTrack.Title });
         var titleScore = candidate.TitleVariants
             .SelectMany(localTitle => remoteTitles.Select(remoteTitle => TitleSimilarity(localTitle, remoteTitle)))
@@ -416,7 +537,8 @@ public sealed partial class NetEasePlaylistService
         if (titleScore < 88 && artistScore == 0 && albumScore == 0)
             return 0;
 
-        return titleScore * 10 + artistScore * 6 + albumScore * 3;
+        var durationScore = DurationScore(candidate.DurationMs, remoteTrack.DurationMs);
+        return titleScore * 10 + artistScore * 6 + albumScore * 3 + durationScore * 4;
     }
 
     private static List<string> BuildTitleVariants(IEnumerable<string?> values)
@@ -430,12 +552,14 @@ public sealed partial class NetEasePlaylistService
                 LeadingTrackNumberRegex().Replace(value!, ""),
                 BracketTextRegex().Replace(value!, ""),
                 TitleNoiseWordsRegex().Replace(value!, ""),
+                InstrumentalMarkerRegex().Replace(value!, ""),
                 FeaturedArtistSuffixRegex().Replace(value!, "")
             };
 
             foreach (var form in forms.ToArray())
             {
                 forms.Add(TitleNoiseWordsRegex().Replace(BracketTextRegex().Replace(form, ""), ""));
+                forms.Add(InstrumentalMarkerRegex().Replace(form, ""));
                 forms.Add(FeaturedArtistSuffixRegex().Replace(form, ""));
             }
 
@@ -529,6 +653,23 @@ public sealed partial class NetEasePlaylistService
             return 8;
         return Math.Min(left.Length, right.Length) >= 4 && (left.Contains(right) || right.Contains(left)) ? 4 : 0;
     }
+
+    private static int DurationScore(long localDurationMs, long remoteDurationMs)
+    {
+        if (localDurationMs <= 0 || remoteDurationMs <= 0)
+            return 0;
+
+        var difference = Math.Abs(localDurationMs - remoteDurationMs);
+        var closeTolerance = Math.Max(2_000L, Math.Min(localDurationMs, remoteDurationMs) / 100L);
+        if (difference <= closeTolerance)
+            return 10;
+        if (difference <= 5_000L)
+            return 6;
+        return difference <= 10_000L ? 2 : 0;
+    }
+
+    private static bool HasInstrumentalMarker(IEnumerable<string?> values) =>
+        values.Any(value => !string.IsNullOrWhiteSpace(value) && InstrumentalMarkerRegex().IsMatch(value));
 
     private static IEnumerable<string> SplitArtistNames(string value) =>
         ArtistSeparatorRegex().Split(value)
@@ -630,6 +771,15 @@ public sealed partial class NetEasePlaylistService
         return property.ValueKind == JsonValueKind.String && int.TryParse(property.GetString(), out value) ? value : 0;
     }
 
+    private static long ReadLong(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property))
+            return 0;
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt64(out var value))
+            return value;
+        return property.ValueKind == JsonValueKind.String && long.TryParse(property.GetString(), out value) ? value : 0;
+    }
+
     private static string? GetString(JsonElement element, string propertyName) =>
         element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString()
@@ -653,7 +803,7 @@ public sealed partial class NetEasePlaylistService
     [GeneratedRegex(@"\s+(?:/|／|\||｜)\s+", RegexOptions.Compiled)]
     private static partial Regex SlashTitleSeparatorRegex();
 
-    [GeneratedRegex(@"\s+(?:feat(?:uring)?\.?|ft\.?|with|vo\.?)\s+.*$", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    [GeneratedRegex(@"\s+(?:feat(?:uring)?\.?|ft\.?|with|vo\.?)\s*.*$", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
     private static partial Regex FeaturedArtistSuffixRegex();
 
     [GeneratedRegex(@"[,，、/＆&;；|]|\s+(?:and|x|with|feat\.?|ft\.?)\s+", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
@@ -661,6 +811,9 @@ public sealed partial class NetEasePlaylistService
 
     [GeneratedRegex(@"(?i)\b(?:official|music|video|lyrics?|audio|remaster(?:ed)?|remix|version|live|mv|hd|hq|cover|explicit|instrumental)\b|伴奏|纯音乐|现场|高清|无损|歌词|完整版|版本|版")]
     private static partial Regex TitleNoiseWordsRegex();
+
+    [GeneratedRegex(@"(?ix)(?:\boff[\s._-]*(?:vocals?|vo)\b|\bvocals?[\s._-]*less\b|\binstrumental(?:\s+(?:mix|version|ver\.?))?\b|\binst(?:\.|rumental)?\b|\bkaraoke\b|\baccompaniment\b|\bbacking[\s._-]*track\b|\bminus[\s._-]*(?:one|vocals?)\b|\b(?:without|no)[\s._-]*(?:lead[\s._-]*)?(?:voice|vocals?)\b|伴奏(?:版)?|纯音乐|純音樂|純音楽|无人声|無人聲|无主唱|無主唱|去人声|去人聲|オフ[\s・._-]*(?:ボ|ヴォ)ーカル|(?:ボ|ヴォ)ーカル[\s・._-]*(?:なし|無し)|歌(?:なし|無し)|インスト(?:ゥルメンタル)?|カラオケ)", RegexOptions.Compiled)]
+    private static partial Regex InstrumentalMarkerRegex();
 
     private static readonly HashSet<char> MeaningfulTitleSymbols = new()
     {

@@ -52,7 +52,7 @@ List<string> completeSync = PlaylistMaintenance.BuildSynchronizedTrackIds(
 	dirty.TrackIds,
 	new[] { newlyMatched },
 	new[] { "100", "300", "999" },
-	hasCompleteTrackIds: true,
+	canPruneMissingRemoteTracks: true,
 	library);
 Require(completeSync.SequenceEqual(new[] { "local-new", "local-kept" }, StringComparer.OrdinalIgnoreCase),
 	"取得完整云端 ID 后，应移除云端已删除的旧歌曲，并保留详情暂缺但云 ID 仍存在的本地歌曲。");
@@ -61,7 +61,7 @@ List<string> incompleteSync = PlaylistMaintenance.BuildSynchronizedTrackIds(
 	dirty.TrackIds,
 	new[] { newlyMatched },
 	new[] { "300" },
-	hasCompleteTrackIds: false,
+	canPruneMissingRemoteTracks: false,
 	library);
 Require(incompleteSync.SequenceEqual(
 	new[] { "local-new", "local-kept", "local-removed-remotely" },

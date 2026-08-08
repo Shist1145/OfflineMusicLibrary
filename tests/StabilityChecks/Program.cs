@@ -9,6 +9,28 @@ static void Require(bool condition, string message)
 	}
 }
 
+static async Task<AppState> ReadStateAsync(string path)
+{
+	await using FileStream stream = File.OpenRead(path);
+	return await JsonSerializer.DeserializeAsync<AppState>(stream, new JsonSerializerOptions
+	{
+		PropertyNameCaseInsensitive = true
+	}) ?? throw new InvalidOperationException("Could not deserialize saved state.");
+}
+
+static async Task RequireStateSaveFailureAsync(Func<Task> action, string message)
+{
+	try
+	{
+		await action();
+	}
+	catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+	{
+		return;
+	}
+	throw new InvalidOperationException(message);
+}
+
 AppState normalState = new()
 {
 	PlayerPageMode = PlayerPageModes.Vinyl,
@@ -111,6 +133,17 @@ Require(safeProfile.VisualizationMode == "Off" &&
 	safeProfile.CacheMilliseconds == 2500,
 	"安全播放模式应使用稳定优先的实际引擎参数。");
 
+string mutexName = @"Local\OfflineMusicLibrary-StabilityChecks-" + Guid.NewGuid().ToString("N");
+using (SingleInstanceService firstInstance = new SingleInstanceService(mutexName))
+using (SingleInstanceService secondInstance = new SingleInstanceService(mutexName))
+{
+	Require(firstInstance.TryAcquire(), "The first application instance must acquire the named mutex.");
+	Require(!secondInstance.TryAcquire(), "A second application instance must be rejected before it can create player resources.");
+	firstInstance.Dispose();
+	using SingleInstanceService replacementInstance = new SingleInstanceService(mutexName);
+	Require(replacementInstance.TryAcquire(), "The mutex must become available after the owning instance exits.");
+}
+
 string temporaryDirectory = Path.Combine(Path.GetTempPath(), "OfflineMusicLibrary-StabilityChecks-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(temporaryDirectory);
 try
@@ -125,9 +158,9 @@ try
 	await File.WriteAllTextAsync(store.LegacyStatePath, JsonSerializer.Serialize(legacyState));
 	AppState migrated = await store.LoadAsync();
 	Require(migrated.Volume == 57 && migrated.PlayerPageMode == PlayerPageModes.Vinyl,
-		"首次启动新版时应完整迁移旧 library.json。 ");
+		"首次启动新版时应完整迁移旧 library.json。");
 	Require(File.Exists(store.StatePath) && File.Exists(store.StateBackupPath),
-		"旧状态迁移后应立即生成隔离的 v2 主文件与备份。");
+		"首次创建 v2 状态时应立即生成主文件与初始恢复副本。");
 
 	AppState savedState = new()
 	{
@@ -143,27 +176,65 @@ try
 		StateBackupEnabled = true
 	};
 	await store.SaveAsync(savedState);
-	Require(File.Exists(store.StatePath), "保存后应存在主状态文件。");
-	Require(File.Exists(store.StateBackupPath), "启用状态保护后应生成可恢复备份。");
+	AppState firstBackup = await ReadStateAsync(store.StateBackupPath);
+	Require(firstBackup.Volume == 57,
+		"第二次保存后 backup 必须保留上一代状态，不能复制刚写入的新主文件。");
+	Require(File.Exists(store.StatePreviousPath),
+		"启用状态保护时应保留第二级 previous 恢复点。");
+
+	AppState newestState = new()
+	{
+		Volume = 65,
+		PlayerPageMode = PlayerPageModes.Standard,
+		StateBackupEnabled = true
+	};
+	await store.SaveAsync(newestState);
+	AppState mainAfterThirdSave = await ReadStateAsync(store.StatePath);
+	AppState backupAfterThirdSave = await ReadStateAsync(store.StateBackupPath);
+	AppState previousAfterThirdSave = await ReadStateAsync(store.StatePreviousPath);
+	Require(mainAfterThirdSave.Volume == 65 && backupAfterThirdSave.Volume == 64 && previousAfterThirdSave.Volume == 57,
+		"三代状态应按 main=最新、backup=上一代、previous=上上代轮换。");
+	Require(!File.ReadAllBytes(store.StatePath).SequenceEqual(File.ReadAllBytes(store.StateBackupPath)),
+		"主文件与 backup 不应再是同一份镜像。");
+
 	await File.WriteAllTextAsync(store.LegacyStatePath, JsonSerializer.Serialize(new AppState
 	{
 		Volume = 12,
 		PlayerPageMode = PlayerPageModes.Standard
 	}));
 	AppState isolated = await store.LoadAsync();
-	Require(isolated.Volume == 64 && isolated.PlayerPageMode == PlayerPageModes.Lyrics,
+	Require(isolated.Volume == 65,
 		"v2 状态存在后，旧版本再次写入 library.json 不得覆盖新版状态。");
 
 	await File.WriteAllTextAsync(store.StatePath, "{ invalid json");
 	AppState recovered = await store.LoadAsync();
-	Require(recovered.Volume == 64, "主状态损坏时应从最近有效备份恢复，而不是返回空白默认状态。");
-	Require(recovered.PlayerPageMode == PlayerPageModes.Lyrics, "沉浸式播放页面模式应随状态备份恢复。");
+	Require(recovered.Volume == 64, "主状态损坏时应从上一代 backup 恢复，而不是返回空白状态。");
+	Require(recovered.PlayerPageMode == PlayerPageModes.Lyrics, "沉浸式播放页面模式应随上一代备份恢复。");
 	Require(recovered.DesktopLyricsRomanizationColor == "#ABCDEF" && recovered.DesktopLyricsTranslationColor == "#123456",
 		"旧配置应迁移为独立的音译与翻译颜色。");
 	Require(recovered.PlaybackWatchdogTimeoutSeconds == 30 && recovered.PlaybackRecoveryAttempts == 1,
 		"稳定性参数载入时应限制在安全范围内。");
 	Require(Directory.EnumerateFiles(temporaryDirectory, "library-v2.invalid-*.json").Any(),
 		"损坏的主状态文件应被保留以便诊断。");
+
+	await File.WriteAllTextAsync(store.StateBackupPath, "{ invalid backup");
+	AppState secondGenerationRecovery = await store.LoadAsync();
+	Require(secondGenerationRecovery.Volume == 57,
+		"主文件与 backup 同时损坏时应继续尝试 previous，而不是丢失整个曲库。");
+
+	await store.SaveAsync(new AppState
+	{
+		Volume = 66,
+		StateBackupEnabled = true
+	});
+	using (FileStream heldPrimary = new FileStream(store.StatePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+	{
+		await RequireStateSaveFailureAsync(
+			() => store.SaveAsync(new AppState { Volume = 99, StateBackupEnabled = true }),
+			"A locked primary file must make SaveAsync fail instead of silently reporting success.");
+	}
+	Require((await store.LoadAsync()).Volume == 66,
+		"A failed replacement must leave the last complete main state readable.");
 
 	AppStore secondStore = new(temporaryDirectory);
 	Task[] concurrentSaves = Enumerable.Range(0, 8)
@@ -175,12 +246,16 @@ try
 		.ToArray();
 	await Task.WhenAll(concurrentSaves);
 	AppState concurrentResult = await store.LoadAsync();
+	AppState concurrentBackup = await ReadStateAsync(store.StateBackupPath);
+	_ = await ReadStateAsync(store.StatePreviousPath);
 	Require(concurrentResult.Volume is >= 40 and <= 47,
-		"多个播放器实例接近同时保存时，最终状态文件仍应是完整 JSON。");
+		"多个保存方接近同时写入时，最终主状态仍应是完整 JSON。");
+	Require(concurrentBackup.Volume is >= 40 and <= 47 && concurrentBackup.Volume != concurrentResult.Volume,
+		"并发保存后 backup 仍应是一份不同于主文件的完整上一代状态。");
 	Require(!Directory.EnumerateFiles(temporaryDirectory, "*.tmp").Any(),
-		"并发保存不应遗留共享临时文件。");
+		"正常保存、失败保存与并发保存都不应遗留本次临时文件。");
 
-	Console.WriteLine("Stability and state recovery checks passed.");
+	Console.WriteLine("Single-instance, stability, rotating backup, failure propagation, and recovery checks passed.");
 }
 finally
 {

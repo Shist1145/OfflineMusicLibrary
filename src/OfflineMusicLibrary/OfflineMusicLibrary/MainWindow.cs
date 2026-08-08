@@ -132,6 +132,8 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 
 	private bool _isScanning;
 
+	private CancellationTokenSource? _scanCancellation;
+
 	private bool _seeking;
 
 	private bool _suppressNavigation;
@@ -392,6 +394,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			return;
 		}
 		_shuttingDown = true;
+		_scanCancellation?.Cancel();
 		_playerTimer.Stop();
 		_autoCloseTimer.Stop();
 		_stateSaveTimer.Stop();
@@ -418,7 +421,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		}
 	}
 
-	private async Task ScanLibraryAsync()
+	private async Task ScanLibraryAsync(bool forceMetadataRefresh = false)
 	{
 		if (_isScanning)
 		{
@@ -430,7 +433,11 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			return;
 		}
 		_isScanning = true;
-		RescanButton.IsEnabled = false;
+		CancellationTokenSource scanCancellation = new CancellationTokenSource();
+		_scanCancellation = scanCancellation;
+		RescanButton.IsEnabled = true;
+		RescanButton.Content = "×";
+		RescanButton.ToolTip = "取消当前扫描";
 		AddFolderButton.IsEnabled = false;
 		Progress<ScanProgress> progress = new Progress<ScanProgress>(delegate(ScanProgress value)
 		{
@@ -441,7 +448,12 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		{
 			bool hadIndexedTracks = _state.Tracks.Count > 0;
 			AppState state = _state;
-			state.Tracks = await _libraryService.ScanAsync(_state.LibraryFolders, _state.Tracks, progress);
+			state.Tracks = await _libraryService.ScanAsync(
+				_state.LibraryFolders,
+				_state.Tracks,
+				progress,
+				scanCancellation.Token,
+				forceMetadataRefresh);
 			await _store.SaveAsync(_state);
 			bool confirmedEmptyLibrary = hadIndexedTracks && _state.Tracks.Count == 0 && _state.LibraryFolders.All(Directory.Exists);
 			RefreshNavigation(confirmedEmptyLibrary);
@@ -460,6 +472,10 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			}
 			StatusText.Text = $"扫描完成，共 {_state.Tracks.Count:N0} 首本地歌曲";
 		}
+		catch (OperationCanceledException) when (scanCancellation.IsCancellationRequested)
+		{
+			StatusText.Text = "扫描已取消，原有曲库未被改写";
+		}
 		catch (Exception ex)
 		{
 			StatusText.Text = "扫描未完成";
@@ -467,8 +483,15 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		}
 		finally
 		{
+			if (ReferenceEquals(_scanCancellation, scanCancellation))
+			{
+				_scanCancellation = null;
+			}
+			scanCancellation.Dispose();
 			_isScanning = false;
 			RescanButton.IsEnabled = true;
+			RescanButton.Content = "↻";
+			RescanButton.ToolTip = "重新扫描曲库";
 			AddFolderButton.IsEnabled = true;
 		}
 	}
@@ -1789,12 +1812,18 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 
 	private async void RescanButton_Click(object sender, RoutedEventArgs e)
 	{
+		if (_isScanning)
+		{
+			_scanCancellation?.Cancel();
+			StatusText.Text = "正在取消扫描；已开始的文件读取会在完成后停止…";
+			return;
+		}
 		await ScanLibraryAsync();
 	}
 
 	private async void ReidentifyCirclesButton_Click(object sender, RoutedEventArgs e)
 	{
-		await ScanLibraryAsync();
+		await ScanLibraryAsync(forceMetadataRefresh: true);
 		if (IsCirclePage)
 		{
 			ApplyCircleFilter();
@@ -2192,7 +2221,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 				playlist.TrackIds,
 				result.Matched,
 				result.RemoteTrackIds,
-				result.HasCompleteTrackIds,
+				result.HasCompleteRemoteDetails,
 				_state.Tracks);
 			playlist.UpdatedAt = DateTime.Now;
 			playlist.InvalidateCover();
@@ -2203,21 +2232,25 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			string missingPreview = string.Join("\n", from track in result.Missing.Take(8)
 				select (!string.IsNullOrWhiteSpace(track.Title)) ? ("• " + track.Title + " - " + track.Artist) : ("• 网易云歌曲 ID " + track.Id + "（详情暂未返回）"));
 			int ncmCount = _state.Tracks.Count((TrackModel track) => track.IsEncryptedNcm);
-			string message = $"歌单：{result.PlaylistName}\n网易云声明歌曲：{result.DeclaredTrackCount}\n已取得完整歌曲 ID：{result.TrackIdCount}\n已读取歌曲详情：{result.ResolvedTrackCount}\n\n已同步本地文件：{_state.Tracks.Count}\n其中 NCM 文件：{ncmCount}\n云 ID 精确匹配：{result.ExactMatchCount}\n名称/艺术家/专辑匹配：{result.FuzzyMatchCount}\n已匹配本地文件：{result.Matched.Count}\n本地确实缺少或未匹配：{result.Missing.Count}";
+			string message = $"歌单：{result.PlaylistName}\n网易云声明歌曲：{result.DeclaredTrackCount}\n已取得完整歌曲 ID：{result.TrackIdCount}\n已读取歌曲详情：{result.ResolvedTrackCount}\n详情暂未返回：{result.UnresolvedTrackIds.Count}\n\n已同步本地文件：{_state.Tracks.Count}\n其中 NCM 文件：{ncmCount}\n云 ID 精确匹配：{result.ExactMatchCount}\n名称/艺术家/专辑匹配：{result.FuzzyMatchCount}\n修正历史错误云 ID：{result.CorrectedCloudIdCount}\n已匹配本地文件：{result.Matched.Count}\n已有详情但仍未匹配：{result.Missing.Count}";
 			if (!result.HasCompleteTrackIds)
 			{
 				message += "\n\n警告：网易云没有返回完整歌曲 ID；本次仅保留仍能对应到本地曲库的原歌单内容，避免临时接口异常造成歌曲丢失。";
 			}
 			else if (result.UnresolvedTrackIds.Count > 0)
 			{
-				message += $"\n\n提示：有 {result.UnresolvedTrackIds.Count} 首暂未取得详情；仍在云端歌单且带有对应云 ID 的本地歌曲已保留，已从云端移除的旧记录不会继续占位。";
+				message += $"\n\n提示：有 {result.UnresolvedTrackIds.Count} 首暂未取得详情；本次会保留原歌单中尚未重新确认的本地歌曲，等下次详情完整后再安全清理。";
 			}
 			if (missingPreview.Length > 0)
 			{
 				message = message + "\n\n部分未匹配歌曲：\n" + missingPreview;
 			}
 			System.Windows.MessageBox.Show(this, message, "导入完成", MessageBoxButton.OK, MessageBoxImage.Asterisk);
-			StatusText.Text = $"已导入“{result.PlaylistName}”，匹配 {result.Matched.Count} / {result.DeclaredTrackCount} 首";
+			StatusText.Text = $"已导入“{result.PlaylistName}”，匹配 {result.Matched.Count} / {result.DeclaredTrackCount} 首，详情暂缺 {result.UnresolvedTrackIds.Count} 首";
+		}
+		catch (OperationCanceledException)
+		{
+			StatusText.Text = "网易云歌单导入已取消";
 		}
 		catch (Exception ex)
 		{
@@ -2284,6 +2317,10 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			System.Windows.MessageBox.Show(this, message, "播放历史导入完成", MessageBoxButton.OK, MessageBoxImage.Asterisk);
 			StatusText.Text = $"已导入网易云历史，匹配 {result.MatchedRecordCount:N0} / {result.SourceRecordCount:N0} 条";
 		}
+		catch (OperationCanceledException)
+		{
+			StatusText.Text = "网易云播放历史导入已取消";
+		}
 		catch (Exception ex)
 		{
 			StatusText.Text = "网易云播放历史导入失败";
@@ -2307,7 +2344,11 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			throw new InvalidOperationException("曲库正在扫描，请等待当前扫描完成后再导入歌单。");
 		}
 		_isScanning = true;
-		RescanButton.IsEnabled = false;
+		CancellationTokenSource scanCancellation = new CancellationTokenSource();
+		_scanCancellation = scanCancellation;
+		RescanButton.IsEnabled = true;
+		RescanButton.Content = "×";
+		RescanButton.ToolTip = "取消导入前的曲库同步";
 		AddFolderButton.IsEnabled = false;
 		Progress<ScanProgress> progress = new Progress<ScanProgress>(delegate(ScanProgress value)
 		{
@@ -2318,7 +2359,11 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		{
 			bool hadIndexedTracks = _state.Tracks.Count > 0;
 			AppState state = _state;
-			state.Tracks = await _libraryService.ScanAsync(_state.LibraryFolders, _state.Tracks, progress);
+			state.Tracks = await _libraryService.ScanAsync(
+				_state.LibraryFolders,
+				_state.Tracks,
+				progress,
+				scanCancellation.Token);
 			await _store.SaveAsync(_state);
 			bool confirmedEmptyLibrary = hadIndexedTracks && _state.Tracks.Count == 0 && _state.LibraryFolders.All(Directory.Exists);
 			RefreshNavigation(confirmedEmptyLibrary);
@@ -2329,8 +2374,15 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		}
 		finally
 		{
+			if (ReferenceEquals(_scanCancellation, scanCancellation))
+			{
+				_scanCancellation = null;
+			}
+			scanCancellation.Dispose();
 			_isScanning = false;
 			RescanButton.IsEnabled = true;
+			RescanButton.Content = "↻";
+			RescanButton.ToolTip = "重新扫描曲库";
 			AddFolderButton.IsEnabled = true;
 		}
 	}

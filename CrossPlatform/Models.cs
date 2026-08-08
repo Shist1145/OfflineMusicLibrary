@@ -130,6 +130,20 @@ public sealed class TrackModel : INotifyPropertyChanged
             (CloudIds ??= []).Add(id);
     }
 
+    public bool ForgetCloudId(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id) || !HasCloudId(id))
+            return false;
+
+        var remaining = GetCloudIds()
+            .Where(candidate => !string.Equals(candidate, id, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        CloudId = remaining.FirstOrDefault();
+        CloudIds = remaining.Skip(1).ToList();
+        return true;
+    }
+
     private static bool IsGenericArtist(string value)
     {
         var normalized = new string(value.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
@@ -183,7 +197,7 @@ public sealed record CircleCard(string Name, int TrackCount)
     public string CountText => $"{TrackCount:N0} 首";
 }
 
-public sealed record NetEaseTrack(string Id, string Title, string Artist, string Album);
+public sealed record NetEaseTrack(string Id, string Title, string Artist, string Album, long DurationMs = 0);
 
 public sealed record NetEaseImportResult(
     string PlaylistName,
@@ -197,7 +211,9 @@ public sealed record NetEaseImportResult(
     public int ResolvedTrackCount { get; init; }
     public int ExactMatchCount { get; init; }
     public int FuzzyMatchCount { get; init; }
+    public int CorrectedCloudIdCount { get; init; }
     public IReadOnlyList<string> UnresolvedTrackIds { get; init; } = [];
+    public IReadOnlyList<string> RemoteTrackIds { get; init; } = [];
     public bool HasCompleteTrackIds => TrackIdCount >= DeclaredTrackCount;
     public bool HasCompleteRemoteDetails => UnresolvedTrackIds.Count == 0 && HasCompleteTrackIds;
 }

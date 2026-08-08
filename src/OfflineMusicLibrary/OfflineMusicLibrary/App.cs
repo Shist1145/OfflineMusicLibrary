@@ -9,10 +9,19 @@ namespace OfflineMusicLibrary;
 
 public partial class App : Application
 {
+	private readonly SingleInstanceService _singleInstance = new SingleInstanceService();
+
 	private int _recoverableErrorNoticePending;
 
 	protected override void OnStartup(StartupEventArgs e)
 	{
+		if (!_singleInstance.TryAcquire())
+		{
+			DiagnosticLog.Write("APP", "A second application instance was rejected before creating playback or hotkey resources.");
+			MessageBox.Show("本地音乐库已经在运行。为避免歌单、播放记录与设置互相覆盖，本次启动已停止。", "本地音乐库已在运行", MessageBoxButton.OK, MessageBoxImage.Information);
+			Shutdown(0);
+			return;
+		}
 		base.DispatcherUnhandledException += OnDispatcherUnhandledException;
 		AppDomain.CurrentDomain.UnhandledException += delegate(object _, UnhandledExceptionEventArgs args)
 		{
@@ -25,6 +34,12 @@ public partial class App : Application
 		};
 		DiagnosticLog.Write("APP", $"Starting version {GetType().Assembly.GetName().Version}");
 		base.OnStartup(e);
+	}
+
+	protected override void OnExit(ExitEventArgs e)
+	{
+		_singleInstance.Dispose();
+		base.OnExit(e);
 	}
 
 	private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs args)
