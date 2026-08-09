@@ -5,6 +5,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Forms;
@@ -18,7 +19,9 @@ public partial class SettingsWindow : Window, IComponentConnector
 {
 	private readonly AppState _sourceState;
 
-	private readonly ObservableCollection<string> _libraryFolders;
+	private readonly ObservableCollection<LibraryRootState> _libraryRoots;
+
+	private readonly LibraryRootHealthService _rootHealthService = new LibraryRootHealthService();
 
 	private bool _resetLyricsPosition;
 
@@ -44,8 +47,8 @@ public partial class SettingsWindow : Window, IComponentConnector
 		InitializeComponent();
 		base.Closed += SettingsWindow_Closed;
 		base.FontFamily = SafeFontFamily(state.UiFontFamily);
-		_libraryFolders = new ObservableCollection<string>(state.LibraryFolders);
-		LibraryFoldersList.ItemsSource = _libraryFolders;
+		_libraryRoots = new ObservableCollection<LibraryRootState>(LibraryRootCatalog.Synchronize(state.LibraryFolders, state.LibraryRoots));
+		LibraryFoldersList.ItemsSource = _libraryRoots;
 		List<string> fonts = (from font in Fonts.SystemFontFamilies
 			select font.Source into name
 			where !string.IsNullOrWhiteSpace(name)
@@ -110,6 +113,14 @@ public partial class SettingsWindow : Window, IComponentConnector
 		PlaybackRecoveryAttemptsCombo.SelectedItem = Math.Clamp(state.PlaybackRecoveryAttempts, 1, 5);
 		SkipFailedTrackCheckBox.IsChecked = state.SkipTrackAfterRecoveryFailure;
 		SafePlaybackModeCheckBox.IsChecked = state.SafePlaybackMode;
+		WaitForOfflineRootsCheckBox.IsChecked = state.WaitForOfflineRoots;
+		NasProbeTimeoutSlider.Value = Math.Clamp(state.NasProbeTimeoutSeconds, 1, 15);
+		NasBufferSlider.Value = Math.Clamp(state.NasBufferSeconds, 5, 30);
+		PersistentAssetCacheCheckBox.IsChecked = state.PersistentAssetCacheEnabled;
+		AssetCacheSizeCombo.ItemsSource = new[] { 256, 512, 1024, 2048, 4096, 8192 };
+		AssetCacheSizeCombo.SelectedItem = new[] { 256, 512, 1024, 2048, 4096, 8192 }
+			.OrderBy(value => Math.Abs(value - state.PersistentAssetCacheMaxMegabytes))
+			.First();
 		StateBackupCheckBox.IsChecked = state.StateBackupEnabled;
 		_primaryColor = NormalizeColor(state.DesktopLyricsPrimaryColor, "#C9B7FF");
 		_secondaryColor = NormalizeColor(state.DesktopLyricsSecondaryColor, "#79D9A9");
@@ -124,6 +135,8 @@ public partial class SettingsWindow : Window, IComponentConnector
 		UpdateColorButtons();
 		_initialized = true;
 		UpdateLyricsPreview();
+		UpdateNasSettingsText();
+		DiagnosticLog.Observe(UpdateAssetCacheStatusAsync(), "ASSET_CACHE", "Could not update cache statistics in settings");
 	}
 
 	public void ApplyTo(AppState state)
@@ -194,8 +207,19 @@ public partial class SettingsWindow : Window, IComponentConnector
 		state.PlaybackRecoveryAttempts = Math.Clamp(SelectedInt(PlaybackRecoveryAttemptsCombo), 1, 5);
 		state.SkipTrackAfterRecoveryFailure = SkipFailedTrackCheckBox.IsChecked == true;
 		state.SafePlaybackMode = SafePlaybackModeCheckBox.IsChecked == true;
+		state.WaitForOfflineRoots = WaitForOfflineRootsCheckBox.IsChecked == true;
+		state.NasProbeTimeoutSeconds = (int)Math.Round(Math.Clamp(NasProbeTimeoutSlider.Value, 1.0, 15.0));
+		state.NasBufferSeconds = (int)Math.Round(Math.Clamp(NasBufferSlider.Value, 5.0, 30.0));
+		state.PersistentAssetCacheEnabled = PersistentAssetCacheCheckBox.IsChecked == true;
+		state.PersistentAssetCacheMaxMegabytes = Math.Clamp(SelectedInt(AssetCacheSizeCombo), 128, 8192);
 		state.StateBackupEnabled = StateBackupCheckBox.IsChecked == true;
-		state.LibraryFolders = _libraryFolders.ToList();
+		state.LibraryRoots = _libraryRoots.ToList();
+		foreach (LibraryRootState root in state.LibraryRoots)
+		{
+			root.ProbeTimeoutSeconds = state.NasProbeTimeoutSeconds;
+			LibraryRootCatalog.Normalize(root);
+		}
+		state.LibraryFolders = state.LibraryRoots.Select(root => root.Path).ToList();
 		if (_resetLyricsPosition)
 		{
 			state.DesktopLyricsLeft = null;
@@ -220,18 +244,112 @@ public partial class SettingsWindow : Window, IComponentConnector
 		{
 			Title = "添加音乐文件夹"
 		};
-		if (dialog.ShowDialog(this) == true && !_libraryFolders.Contains<string>(dialog.FolderName, StringComparer.OrdinalIgnoreCase))
+		if (dialog.ShowDialog(this) == true && !_libraryRoots.Any(root => string.Equals(root.Path, LibraryRootCatalog.NormalizePath(dialog.FolderName), StringComparison.OrdinalIgnoreCase)))
 		{
-			_libraryFolders.Add(dialog.FolderName);
+			_libraryRoots.Add(LibraryRootCatalog.Create(dialog.FolderName));
 		}
 	}
 
 	private void RemoveLibraryFolderButton_Click(object sender, RoutedEventArgs e)
 	{
-		if (LibraryFoldersList.SelectedItem is string folder)
+		if (LibraryFoldersList.SelectedItem is LibraryRootState root)
 		{
-			_libraryFolders.Remove(folder);
+			_libraryRoots.Remove(root);
 		}
+	}
+
+	private async void ProbeLibraryRootsButton_Click(object sender, RoutedEventArgs e)
+	{
+		if (sender is System.Windows.Controls.Button button)
+		{
+			button.IsEnabled = false;
+		}
+		try
+		{
+			foreach (LibraryRootState root in _libraryRoots)
+			{
+				root.Health = LibraryRootHealthStates.Checking;
+			}
+			IReadOnlyList<LibraryRootProbeResult> results = await _rootHealthService.ProbeManyAsync(_libraryRoots, 2);
+			foreach (LibraryRootProbeResult result in results)
+			{
+				_libraryRoots.FirstOrDefault(root => string.Equals(root.RootId, result.RootId, StringComparison.OrdinalIgnoreCase))?.ApplyProbeResult(result);
+			}
+			LibraryFoldersList.Items.Refresh();
+		}
+		catch (Exception ex)
+		{
+			System.Windows.MessageBox.Show(this, ex.Message, "无法完成目录检测", MessageBoxButton.OK, MessageBoxImage.Exclamation);
+		}
+		finally
+		{
+			if (sender is System.Windows.Controls.Button restoreButton)
+			{
+				restoreButton.IsEnabled = true;
+			}
+		}
+	}
+
+	private void NasSettingSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+	{
+		if (_initialized)
+		{
+			UpdateNasSettingsText();
+		}
+	}
+
+	private void UpdateNasSettingsText()
+	{
+		if (NasProbeTimeoutText != null)
+		{
+			NasProbeTimeoutText.Text = $"{Math.Round(NasProbeTimeoutSlider.Value):0} 秒";
+		}
+		if (NasBufferText != null)
+		{
+			NasBufferText.Text = $"{Math.Round(NasBufferSlider.Value):0} 秒";
+		}
+	}
+
+	private async void ClearAssetCacheButton_Click(object sender, RoutedEventArgs e)
+	{
+		MessageBoxResult answer = System.Windows.MessageBox.Show(
+			this,
+			"只会删除本机保存的封面和歌词缓存，不会改写音乐文件、NAS、曲库索引或歌单。确定继续吗？",
+			"清理本地资源缓存",
+			MessageBoxButton.YesNo,
+			MessageBoxImage.Question);
+		if (answer != MessageBoxResult.Yes)
+		{
+			return;
+		}
+		if (sender is System.Windows.Controls.Button button)
+		{
+			button.IsEnabled = false;
+		}
+		try
+		{
+			AssetCacheStatusText.Text = "正在清理本机缓存……";
+			await Task.Run(PersistentAssetCache.Clear);
+			await UpdateAssetCacheStatusAsync();
+		}
+		finally
+		{
+			if (sender is System.Windows.Controls.Button restoreButton)
+			{
+				restoreButton.IsEnabled = true;
+			}
+		}
+	}
+
+	private async Task UpdateAssetCacheStatusAsync()
+	{
+		if (AssetCacheStatusText == null)
+		{
+			return;
+		}
+		AssetCacheStatusText.Text = "正在统计本机缓存……";
+		AssetCacheStatistics statistics = await Task.Run(PersistentAssetCache.GetStatistics);
+		AssetCacheStatusText.Text = $"当前本机缓存 {statistics.Files:N0} 项，共 {statistics.Bytes / 1024d / 1024d:N1} MiB";
 	}
 
 	private void ResetLyricsPositionButton_Click(object sender, RoutedEventArgs e)
@@ -562,10 +680,12 @@ public partial class SettingsWindow : Window, IComponentConnector
 		try
 		{
 			System.IO.Directory.CreateDirectory(DiagnosticLog.LogDirectory);
-			Process.Start(new ProcessStartInfo("explorer.exe", $"\"{DiagnosticLog.LogDirectory}\"")
+			ProcessStartInfo explorer = new("explorer.exe")
 			{
-				UseShellExecute = true
-			});
+				UseShellExecute = false
+			};
+			explorer.ArgumentList.Add(DiagnosticLog.LogDirectory);
+			Process.Start(explorer);
 		}
 		catch (Exception exception)
 		{

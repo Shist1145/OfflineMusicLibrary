@@ -4,9 +4,11 @@ namespace OfflineMusicLibrary;
 
 public sealed class AppState
 {
-	public int StateFormatVersion { get; set; } = 2;
+	public int StateFormatVersion { get; set; } = 3;
 
 	public List<string> LibraryFolders { get; set; } = new List<string>();
+
+	public List<LibraryRootState> LibraryRoots { get; set; } = new List<LibraryRootState>();
 
 	public List<TrackModel> Tracks { get; set; } = new List<TrackModel>();
 
@@ -98,6 +100,8 @@ public sealed class AppState
 
 	public long LastPlaybackPositionMs { get; set; }
 
+	public PlaybackSessionState PlaybackSession { get; set; } = new PlaybackSessionState();
+
 	public int LyricOffsetMs { get; set; }
 
 	public bool DesktopLyricsTopmost { get; set; } = true;
@@ -165,6 +169,16 @@ public sealed class AppState
 	public bool SkipTrackAfterRecoveryFailure { get; set; } = true;
 
 	public bool SafePlaybackMode { get; set; }
+
+	public bool WaitForOfflineRoots { get; set; } = true;
+
+	public int NasProbeTimeoutSeconds { get; set; } = 3;
+
+	public int NasBufferSeconds { get; set; } = 10;
+
+	public bool PersistentAssetCacheEnabled { get; set; } = true;
+
+	public int PersistentAssetCacheMaxMegabytes { get; set; } = 1024;
 
 	public bool StateBackupEnabled { get; set; } = true;
 }

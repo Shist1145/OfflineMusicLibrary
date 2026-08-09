@@ -9,7 +9,8 @@ public readonly record struct PlaybackEngineProfile(
 	string EqualizerPreset,
 	string HardwareDecoding,
 	string VideoOutput,
-	int CacheMilliseconds);
+	int CacheMilliseconds,
+	bool IsNetworkSource = false);
 
 public static class PlaybackStabilityService
 {
@@ -32,9 +33,11 @@ public static class PlaybackStabilityService
 		return current - recoveryPoint >= 5000L;
 	}
 
-	public static PlaybackEngineProfile Resolve(AppState state, bool isVideo)
+	public static PlaybackEngineProfile Resolve(AppState state, bool isVideo, string? path = null)
 	{
 		ArgumentNullException.ThrowIfNull(state);
+		bool isNetworkSource = IsNetworkSource(state, path);
+		int networkCacheMilliseconds = Math.Clamp(state.NasBufferSeconds, 5, 30) * 1000;
 		if (state.SafePlaybackMode)
 		{
 			return new PlaybackEngineProfile(
@@ -44,7 +47,8 @@ public static class PlaybackStabilityService
 				"Off",
 				"Disabled",
 				"Auto",
-				2500);
+				isNetworkSource ? Math.Max(10000, networkCacheMilliseconds) : 2500,
+				isNetworkSource);
 		}
 		return new PlaybackEngineProfile(
 			isVideo ? "Off" : state.VisualizationMode,
@@ -53,6 +57,21 @@ public static class PlaybackStabilityService
 			AudioEffectPresets.NormalizeEqualizer(state.EqualizerPreset),
 			state.HardwareDecoding,
 			state.VideoOutput,
-			1500);
+			isNetworkSource ? networkCacheMilliseconds : 1500,
+			isNetworkSource);
+	}
+
+	private static bool IsNetworkSource(AppState state, string? path)
+	{
+		if (string.IsNullOrWhiteSpace(path))
+		{
+			return false;
+		}
+		if (LibraryRootCatalog.IsUncPath(path))
+		{
+			return true;
+		}
+		LibraryRootState? root = LibraryRootCatalog.FindOwningRoot(state.LibraryRoots, path);
+		return root != null && LibraryRootKinds.IsNetwork(root.RootKind);
 	}
 }

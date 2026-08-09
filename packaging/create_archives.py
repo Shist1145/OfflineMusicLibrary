@@ -13,6 +13,11 @@ APP_NAME = "本地音乐库.app"
 VERSION = "1.4.0"
 
 
+def is_link_like(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)
+    return path.is_symlink() or bool(is_junction and is_junction())
+
+
 def zip_info(name: str, *, executable: bool = False, directory: bool = False) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(name)
     info.create_system = 3
@@ -34,6 +39,8 @@ def add_zip_file(archive: zipfile.ZipFile, source: Path, target: str, *, executa
 def package_macos(architecture: str) -> Path:
     source = RELEASE / f"OfflineMusicLibrary-{VERSION}-macos-{architecture}"
     destination = ARTIFACTS / f"OfflineMusicLibrary-{VERSION}-macos-{architecture}.zip"
+    if is_link_like(source):
+        raise ValueError(f"Refusing to package a redirected publish directory: {source}")
     if not (source / "OfflineMusicLibrary").is_file():
         raise FileNotFoundError(f"macOS publish output is missing: {source}")
 
@@ -46,6 +53,8 @@ def package_macos(architecture: str) -> Path:
         add_zip_file(archive, ROOT / "packaging/macos/Info.plist", f"{prefix}/Info.plist")
         add_zip_file(archive, ROOT / "packaging/macos/README.txt", f"{prefix}/Resources/README.txt")
         for path in sorted(source.rglob("*")):
+            if is_link_like(path):
+                raise ValueError(f"Refusing to package a symbolic link: {path}")
             if not path.is_file():
                 continue
             relative = path.relative_to(source).as_posix()
@@ -61,6 +70,8 @@ def package_macos(architecture: str) -> Path:
 def package_linux() -> Path:
     source = RELEASE / f"OfflineMusicLibrary-{VERSION}-linux-x64"
     destination = ARTIFACTS / f"OfflineMusicLibrary-{VERSION}-linux-x64.tar.gz"
+    if is_link_like(source):
+        raise ValueError(f"Refusing to package a redirected publish directory: {source}")
     if not (source / "OfflineMusicLibrary").is_file():
         raise FileNotFoundError(f"Linux publish output is missing: {source}")
 
@@ -74,6 +85,8 @@ def package_linux() -> Path:
 
     with tarfile.open(destination, "w:gz", compresslevel=6) as archive:
         for path in sorted(source.rglob("*")):
+            if is_link_like(path):
+                raise ValueError(f"Refusing to package a symbolic link: {path}")
             archive.add(path, arcname=path.relative_to(source).as_posix(), recursive=False, filter=normalize)
         archive.add(ROOT / "packaging/linux/README.txt", arcname="README.txt", filter=normalize)
         archive.add(

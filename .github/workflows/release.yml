@@ -1,25 +1,27 @@
-name: Build OfflineMusicLibrary 1.6.3
+name: Build OfflineMusicLibrary 1.7.0-preview.1
 
 on:
   push:
     branches: [main]
-    tags: [v1.6.3]
+    tags: [v1.7.0-preview.1]
   pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
-  RELEASE_VERSION: 1.6.3
+  RELEASE_VERSION: 1.7.0-preview.1
 
 jobs:
   windows:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: 10.0.x
 
@@ -48,17 +50,16 @@ jobs:
             -p:DebugType=None -p:DebugSymbols=false `
             -o $publishDir
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          foreach ($unusedArchitecture in @("win-x86", "win-arm64")) {
-            $unusedRuntime = Join-Path $publishDir "libvlc/$unusedArchitecture"
-            if (Test-Path -LiteralPath $unusedRuntime) {
-              Remove-Item -LiteralPath $unusedRuntime -Recurse -Force
-            }
+          if (Get-Command py -ErrorAction SilentlyContinue) {
+            py -3 packaging/create_windows_archive.py --source $publishDir --output "artifacts/$archiveName"
+          } else {
+            python packaging/create_windows_archive.py --source $publishDir --output "artifacts/$archiveName"
           }
-          Compress-Archive -Path "$publishDir/*" -DestinationPath "artifacts/$archiveName" -Force
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $hash = (Get-FileHash "artifacts/$archiveName" -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash *$archiveName" | Set-Content "artifacts/SHA256SUMS-$env:RELEASE_VERSION.txt" -Encoding ascii
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: OfflineMusicLibrary-${{ env.RELEASE_VERSION }}-windows-x64
           path: |
@@ -70,8 +71,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: 10.0.x
       - name: Verify cross-platform preview source
@@ -80,12 +83,16 @@ jobs:
         run: dotnet run --project tests/NetEaseCrossPlatformChecks/NetEaseCrossPlatformChecks.csproj -c Release
 
   release:
-    if: github.ref == 'refs/tags/v1.6.3'
+    if: github.ref == 'refs/tags/v1.7.0-preview.1'
     needs: [windows, cross-platform-source]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: OfflineMusicLibrary-${{ env.RELEASE_VERSION }}-windows-x64
           path: artifacts
@@ -97,3 +104,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" artifacts/*
           --title "本地音乐库 ${{ env.RELEASE_VERSION }}"
           --notes-file RELEASE_NOTES.md
+          --prerelease

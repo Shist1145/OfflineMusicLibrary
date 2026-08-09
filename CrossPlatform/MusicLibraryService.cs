@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -29,10 +30,11 @@ public sealed class MusicLibraryService
         IProgress<ScanProgress>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var files = roots.Where(Directory.Exists)
-            .SelectMany(EnumerateMediaFiles)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var files = await Task.Run(() => roots.Where(Directory.Exists)
+                .SelectMany(EnumerateMediaFiles)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            cancellationToken);
         var existingById = existing
             .Where(track => !string.IsNullOrWhiteSpace(track.Id))
             .GroupBy(track => track.Id, StringComparer.OrdinalIgnoreCase)
@@ -149,17 +151,16 @@ public sealed class MusicLibraryService
             return sidecar;
 
         var picture = tag.Pictures.FirstOrDefault(item => item.Data?.Data is { Length: > 0 });
-        if (picture?.Data?.Data is { Length: > 0 } bytes)
+        if (picture?.Data?.Data is { Length: > 0 } bytes && bytes.Length <= ContentReadLimits.ArtworkBytes)
         {
             try
             {
                 var hash = Convert.ToHexString(SHA256.HashData(bytes));
                 var cachePath = Path.Combine(AppStore.ArtworkCacheDirectory, $"{hash}.cover");
-                if (!File.Exists(cachePath))
-                    File.WriteAllBytes(cachePath, bytes);
-                return cachePath;
+                if (TryWriteArtworkCache(cachePath, bytes))
+                    return cachePath;
             }
-            catch
+            catch (Exception exception) when (IsExpectedFileSystemException(exception))
             {
             }
         }
@@ -267,16 +268,58 @@ public sealed class MusicLibraryService
                     if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) == 0)
                         pending.Push(child);
                 }
-                catch
+                catch (Exception exception) when (IsExpectedFileSystemException(exception))
                 {
                 }
             }
 
             foreach (var file in files)
-                if (SupportedExtensions.Contains(Path.GetExtension(file)))
+                if (SupportedExtensions.Contains(Path.GetExtension(file)) && !IsReparsePoint(file))
                     yield return file;
         }
     }
+
+    private static bool TryWriteArtworkCache(string cachePath, byte[] bytes)
+    {
+        if (bytes.Length == 0 || bytes.Length > ContentReadLimits.ArtworkBytes)
+            return false;
+        var cacheDirectory = Path.GetDirectoryName(cachePath);
+        if (string.IsNullOrWhiteSpace(cacheDirectory))
+            return false;
+        Directory.CreateDirectory(cacheDirectory);
+        if ((File.GetAttributes(cacheDirectory) & FileAttributes.ReparsePoint) != 0)
+            return false;
+        if (File.Exists(cachePath))
+            return !IsReparsePoint(cachePath) && new FileInfo(cachePath).Length <= ContentReadLimits.ArtworkBytes;
+        try
+        {
+            using var stream = new FileStream(cachePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            stream.Write(bytes);
+            stream.Flush(flushToDisk: true);
+            return true;
+        }
+        catch (IOException)
+        {
+            return File.Exists(cachePath) && !IsReparsePoint(cachePath) &&
+                new FileInfo(cachePath).Length <= ContentReadLimits.ArtworkBytes;
+        }
+    }
+
+    private static bool IsReparsePoint(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception exception) when (IsExpectedFileSystemException(exception))
+        {
+            return true;
+        }
+    }
+
+    private static bool IsExpectedFileSystemException(Exception exception) =>
+        exception is IOException or UnauthorizedAccessException or NotSupportedException or
+            SecurityException or ArgumentException;
 
     public static string CreateTrackId(string path)
     {

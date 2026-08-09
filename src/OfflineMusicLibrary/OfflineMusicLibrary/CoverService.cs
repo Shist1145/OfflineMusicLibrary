@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Security;
 using System.Windows.Media.Imaging;
 using TagLib;
 
@@ -31,7 +33,7 @@ public static class CoverService
 			foreach (string extension in imageExtensions)
 			{
 				string path = Path.Combine(directory, name + extension);
-				if (System.IO.File.Exists(path))
+				if (IsSafeSidecar(path))
 				{
 					return path;
 				}
@@ -39,9 +41,12 @@ public static class CoverService
 		}
 		try
 		{
-			return Directory.EnumerateFiles(directory).FirstOrDefault((string path2) => ImageExtensions.Contains<string>(Path.GetExtension(path2), StringComparer.OrdinalIgnoreCase) && SidecarNames.Contains<string>(Path.GetFileNameWithoutExtension(path2), StringComparer.OrdinalIgnoreCase));
+			return Directory.EnumerateFiles(directory).FirstOrDefault((string path2) =>
+				ImageExtensions.Contains<string>(Path.GetExtension(path2), StringComparer.OrdinalIgnoreCase) &&
+				SidecarNames.Contains<string>(Path.GetFileNameWithoutExtension(path2), StringComparer.OrdinalIgnoreCase) &&
+				IsSafeSidecar(path2));
 		}
-		catch (IOException)
+		catch (Exception ex) when (IsExpectedMediaException(ex))
 		{
 			return null;
 		}
@@ -49,7 +54,7 @@ public static class CoverService
 
 	public static BitmapSource? LoadCover(TrackModel track)
 	{
-		return LoadCoverCore(track, null);
+		return LoadCoverCore(track, 1600, allowSourceRead: true);
 	}
 
 	public static BitmapSource? LoadImageFile(string path, int decodePixelWidth = 320)
@@ -60,9 +65,9 @@ public static class CoverService
 		}
 		try
 		{
-			return CreateBitmap(System.IO.File.ReadAllBytes(path), Math.Clamp(decodePixelWidth, 32, 1600));
+			return CreateBitmap(BoundedFileReader.ReadAllBytes(path, ContentReadLimits.ArtworkBytes), Math.Clamp(decodePixelWidth, 32, 1600));
 		}
-		catch
+		catch (Exception ex) when (IsExpectedMediaException(ex))
 		{
 			return null;
 		}
@@ -75,6 +80,16 @@ public static class CoverService
 
 	public static BitmapSource? LoadThumbnail(TrackModel track, int decodePixelWidth)
 	{
+		return LoadThumbnailCore(track, decodePixelWidth, allowSourceRead: true);
+	}
+
+	public static BitmapSource? LoadCachedThumbnail(TrackModel track, int decodePixelWidth = 72)
+	{
+		return LoadThumbnailCore(track, decodePixelWidth, allowSourceRead: false);
+	}
+
+	private static BitmapSource? LoadThumbnailCore(TrackModel track, int decodePixelWidth, bool allowSourceRead)
+	{
 		string key = $"{Math.Clamp(decodePixelWidth, 32, 800)}:{CreateCacheKey(track)}";
 		lock (ThumbnailCacheLock)
 		{
@@ -83,59 +98,116 @@ public static class CoverService
 				return cached;
 			}
 		}
-		BitmapSource? thumbnail = LoadCoverCore(track, Math.Clamp(decodePixelWidth, 32, 800));
+		BitmapSource? thumbnail = LoadCoverCore(track, Math.Clamp(decodePixelWidth, 32, 800), allowSourceRead);
 		lock (ThumbnailCacheLock)
 		{
 			if (ThumbnailCache.Count > 1600)
 			{
 				ThumbnailCache.Clear();
 			}
-			ThumbnailCache[key] = thumbnail;
+			if (thumbnail != null)
+			{
+				ThumbnailCache[key] = thumbnail;
+			}
 			return thumbnail;
 		}
 	}
 
-	private static BitmapSource? LoadCoverCore(TrackModel track, int? decodePixelWidth)
+	private static BitmapSource? LoadCoverCore(TrackModel track, int? decodePixelWidth, bool allowSourceRead)
 	{
+		AssetSourceStamp indexedStamp = new(Math.Max(0, track.FileSize), Math.Max(0, track.LastWriteTimeUtcTicks));
+		if (PersistentAssetCache.TryRead("artwork", track.Id, indexedStamp, allowStale: false, out byte[] cachedBytes))
+		{
+			try
+			{
+				return CreateBitmap(cachedBytes, decodePixelWidth);
+			}
+			catch (Exception ex) when (IsExpectedMediaException(ex))
+			{
+			}
+		}
+		if (!allowSourceRead)
+		{
+			return PersistentAssetCache.TryRead("artwork", track.Id, null, allowStale: true, out cachedBytes)
+				? TryCreateBitmap(cachedBytes, decodePixelWidth)
+				: null;
+		}
+
+		byte[]? sourceBytes = null;
+		AssetSourceStamp sourceStamp = indexedStamp;
 		try
 		{
 			using TagLib.File file = TagLib.File.Create(track.FilePath);
-			byte[] bytes = file.Tag.Pictures.FirstOrDefault()?.Data?.Data;
-			if (bytes != null && bytes.Length > 0)
+			sourceBytes = file.Tag.Pictures.FirstOrDefault()?.Data?.Data;
+			if (sourceBytes != null && sourceBytes.Length > 0)
 			{
-				return CreateBitmap(bytes, decodePixelWidth);
+				sourceStamp = ReadSourceStamp(track.FilePath, "embedded");
 			}
 		}
-		catch
+		catch (Exception ex) when (IsExpectedMediaException(ex))
 		{
 		}
-		string sidecar = FindSidecar(track.FilePath);
-		if (sidecar == null)
+		if (sourceBytes is { Length: > ContentReadLimits.ArtworkBytes })
 		{
-			return null;
+			sourceBytes = null;
 		}
-		try
+		if (sourceBytes == null || sourceBytes.Length == 0)
 		{
-			return CreateBitmap(System.IO.File.ReadAllBytes(sidecar), decodePixelWidth);
+			string? sidecar = FindSidecar(track.FilePath);
+			if (sidecar != null)
+			{
+				try
+				{
+					sourceBytes = BoundedFileReader.ReadAllBytes(sidecar, ContentReadLimits.ArtworkBytes);
+					AssetSourceStamp sidecarStamp = ReadSourceStamp(sidecar, Path.GetFileName(sidecar));
+					sourceStamp = new AssetSourceStamp(
+						indexedStamp.Length,
+						indexedStamp.LastWriteUtcTicks,
+						$"{sidecarStamp.Signature}:{sidecarStamp.Length}:{sidecarStamp.LastWriteUtcTicks}");
+				}
+				catch (Exception ex) when (IsExpectedMediaException(ex))
+				{
+					sourceBytes = null;
+				}
+			}
 		}
-		catch
+		if (sourceBytes != null && sourceBytes.Length > 0)
 		{
-			return null;
+			PersistentAssetCache.Write("artwork", track.Id, sourceStamp, sourceBytes);
+			return TryCreateBitmap(sourceBytes, decodePixelWidth);
 		}
+		return PersistentAssetCache.TryRead("artwork", track.Id, null, allowStale: true, out cachedBytes)
+			? TryCreateBitmap(cachedBytes, decodePixelWidth)
+			: null;
 	}
 
 	private static string CreateCacheKey(TrackModel track)
 	{
+		return $"{track.Id}:{track.FileSize}:{track.LastWriteTimeUtcTicks}";
+	}
+
+	private static AssetSourceStamp ReadSourceStamp(string path, string signature)
+	{
 		try
 		{
-			FileInfo fileInfo = new FileInfo(track.FilePath);
-			string sidecar = FindSidecar(track.FilePath);
-			string sidecarStamp = ((sidecar == null || !System.IO.File.Exists(sidecar)) ? "" : $"{sidecar}:{System.IO.File.GetLastWriteTimeUtc(sidecar).Ticks}");
-			return $"{track.FilePath}:{fileInfo.LastWriteTimeUtc.Ticks}:{fileInfo.Length}:{sidecarStamp}";
+			FileInfo info = new(path);
+			return new AssetSourceStamp(info.Length, info.LastWriteTimeUtc.Ticks, signature);
 		}
-		catch
+		catch (Exception ex) when (IsExpectedMediaException(ex))
 		{
-			return track.FilePath;
+			return new AssetSourceStamp(0, 0, signature);
+		}
+	}
+
+	private static BitmapSource? TryCreateBitmap(byte[] bytes, int? decodePixelWidth)
+	{
+		try
+		{
+			return CreateBitmap(bytes, decodePixelWidth);
+		}
+		catch (Exception ex) when (IsExpectedMediaException(ex))
+		{
+			return null;
 		}
 	}
 
@@ -146,13 +218,37 @@ public static class CoverService
 		bitmap.BeginInit();
 		bitmap.CacheOption = BitmapCacheOption.OnLoad;
 		bitmap.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
-		if (decodePixelWidth.HasValue && decodePixelWidth.GetValueOrDefault() > 0)
-		{
-			bitmap.DecodePixelWidth = decodePixelWidth.Value;
-		}
+		int decodeLimit = Math.Clamp(decodePixelWidth ?? 1600, 32, 1600);
+		bitmap.DecodePixelWidth = decodeLimit;
+		bitmap.DecodePixelHeight = decodeLimit;
 		bitmap.StreamSource = stream;
 		bitmap.EndInit();
 		bitmap.Freeze();
 		return bitmap;
+	}
+
+	private static bool IsSafeSidecar(string path)
+	{
+		try
+		{
+			if (!System.IO.File.Exists(path))
+			{
+				return false;
+			}
+			FileInfo info = new(path);
+			return (info.Attributes & FileAttributes.ReparsePoint) == 0 &&
+				info.Length is > 0 and <= ContentReadLimits.ArtworkBytes;
+		}
+		catch (Exception ex) when (IsExpectedMediaException(ex))
+		{
+			return false;
+		}
+	}
+
+	private static bool IsExpectedMediaException(Exception exception)
+	{
+		return exception is IOException or InvalidDataException or UnauthorizedAccessException or NotSupportedException or
+			ArgumentException or InvalidOperationException or SecurityException or COMException or
+			CorruptFileException or UnsupportedFormatException;
 	}
 }

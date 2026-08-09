@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,6 +10,8 @@ namespace OfflineMusicLibrary;
 
 public sealed class AppStore
 {
+	internal const long MaximumStateFileBytes = 256L * 1024L * 1024L;
+
 	private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
 	private readonly object _validStateGate = new object();
 	private readonly Dictionary<string, StateFileStamp> _validStateFiles = new Dictionary<string, StateFileStamp>(StringComparer.OrdinalIgnoreCase);
@@ -35,9 +38,12 @@ public sealed class AppStore
 
 	public string PlaylistArtworkDirectory => Path.Combine(DataDirectory, "playlist-artwork");
 
+	public string AssetCacheDirectory => Path.Combine(DataDirectory, "asset-cache");
+
 	public AppStore(string? dataDirectory = null)
 	{
 		DataDirectory = dataDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OfflineMusicLibrary");
+		_options.Converters.Add(new BoundedStringJsonConverter(ContentReadLimits.StateStringUtf8Bytes));
 	}
 
 	public async Task<AppState> LoadAsync()
@@ -53,7 +59,7 @@ public sealed class AppStore
 		AppState? legacy = await TryLoadStateFilesAsync("旧版", LegacyStatePath, LegacyStateBackupPath).ConfigureAwait(false);
 		if (legacy != null)
 		{
-			legacy.StateFormatVersion = 2;
+			legacy.StateFormatVersion = 3;
 			await SaveAsync(legacy).ConfigureAwait(false);
 			DiagnosticLog.Write("STATE", "Migrated legacy library.json into isolated v2 state files");
 			return legacy;
@@ -156,6 +162,10 @@ public sealed class AppStore
 			FileOptions.Asynchronous | FileOptions.WriteThrough))
 		{
 			await JsonSerializer.SerializeAsync(stream, state, _options, cancellationToken).ConfigureAwait(false);
+			if (stream.Length > MaximumStateFileBytes)
+			{
+				throw new InvalidDataException($"State file exceeds the {MaximumStateFileBytes / 1024 / 1024} MiB safety limit.");
+			}
 			await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
 			stream.Flush(flushToDisk: true);
 		}
@@ -164,6 +174,10 @@ public sealed class AppStore
 	private async Task<AppState> LoadStateFileAsync(string path, CancellationToken cancellationToken = default)
 	{
 		await using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+		if (stream.Length > MaximumStateFileBytes)
+		{
+			throw new InvalidDataException($"State file exceeds the {MaximumStateFileBytes / 1024 / 1024} MiB safety limit: {Path.GetFileName(path)}");
+		}
 		AppState state = (await JsonSerializer.DeserializeAsync<AppState>(stream, _options, cancellationToken).ConfigureAwait(false)) ?? throw new JsonException("状态文件内容为空。");
 		Normalize(state);
 		RememberValidStateFile(path);
@@ -349,6 +363,12 @@ public sealed class AppStore
 	{
 		try
 		{
+			FileInfo source = new(sourcePath);
+			if (!source.Exists || source.Length > MaximumStateFileBytes)
+			{
+				DiagnosticLog.Write("STATE", $"Skipped preserving oversized invalid state file: {Path.GetFileName(sourcePath)}");
+				return;
+			}
 			string safeLabel = label == "新版" ? "v2" : "legacy";
 			string invalidCopy = Path.Combine(DataDirectory, $"library-{safeLabel}.invalid-{DateTime.Now:yyyyMMdd-HHmmss}.json");
 			File.Copy(sourcePath, invalidCopy, overwrite: true);
@@ -361,7 +381,7 @@ public sealed class AppStore
 
 	private static bool IsRecoverableStateException(Exception exception)
 	{
-		return exception is JsonException or IOException or UnauthorizedAccessException or NotSupportedException;
+		return exception is JsonException or IOException or InvalidDataException or UnauthorizedAccessException or NotSupportedException;
 	}
 
 	private static AppState CreateDefaultState()
@@ -377,17 +397,25 @@ public sealed class AppStore
 		{
 			state.LibraryFolders.Add(fallback);
 		}
+		Normalize(state);
 		return state;
 	}
 
 	private static void Normalize(AppState state)
 	{
-		state.StateFormatVersion = 2;
+		int sourceFormatVersion = state.StateFormatVersion;
+		state.StateFormatVersion = 3;
 		AppState appState = state;
 		if (appState.LibraryFolders == null)
 		{
 			List<string> list = (appState.LibraryFolders = new List<string>());
 		}
+		state.LibraryRoots ??= new List<LibraryRootState>();
+		List<string> configuredRootPaths = state.LibraryFolders
+			.Concat(state.LibraryRoots.Where(root => root != null).Select(root => root.Path))
+			.ToList();
+		state.LibraryRoots = LibraryRootCatalog.Synchronize(configuredRootPaths, state.LibraryRoots);
+		state.LibraryFolders = state.LibraryRoots.Select(root => root.Path).ToList();
 		appState = state;
 		if (appState.Tracks == null)
 		{
@@ -407,6 +435,9 @@ public sealed class AppStore
 		state.SpatialAudioMode = AudioEffectPresets.NormalizeSpatialAudio(state.SpatialAudioMode);
 		state.LyricsDisplayMode = LyricsDisplayModes.Normalize(state.LyricsDisplayMode);
 		state.PlayerPageMode = PlayerPageModes.Normalize(state.PlayerPageMode);
+		state.RepeatMode = state.RepeatMode is "Off" or "One" or "All" ? state.RepeatMode : "All";
+		state.ShuffleMode = ShuffleService.Modes.Contains(state.ShuffleMode, StringComparer.Ordinal) ? state.ShuffleMode : "Off";
+		state.ShuffleEnabled = state.ShuffleMode != "Off";
 		state.DesktopLyricsPrimaryColor = LyricsStyleService.NormalizeColor(state.DesktopLyricsPrimaryColor, "#C9B7FF");
 		state.DesktopLyricsSecondaryColor = LyricsStyleService.NormalizeColor(state.DesktopLyricsSecondaryColor, "#79D9A9");
 		state.DesktopLyricsRomanizationColor = LyricsStyleService.NormalizeColor(state.DesktopLyricsRomanizationColor, state.DesktopLyricsSecondaryColor);
@@ -418,6 +449,21 @@ public sealed class AppStore
 		state.DesktopLyricsStrokeScale = ClampFinite(state.DesktopLyricsStrokeScale, 0.5, 2.0, 1.0);
 		state.PlaybackWatchdogTimeoutSeconds = Math.Clamp(state.PlaybackWatchdogTimeoutSeconds, 8, 30);
 		state.PlaybackRecoveryAttempts = Math.Clamp(state.PlaybackRecoveryAttempts, 1, 5);
+		state.NasProbeTimeoutSeconds = Math.Clamp(state.NasProbeTimeoutSeconds, 1, 15);
+		state.NasBufferSeconds = Math.Clamp(state.NasBufferSeconds, 5, 30);
+		state.PersistentAssetCacheMaxMegabytes = Math.Clamp(state.PersistentAssetCacheMaxMegabytes, 128, 8192);
+		foreach (LibraryRootState root in state.LibraryRoots)
+		{
+			root.ProbeTimeoutSeconds = state.NasProbeTimeoutSeconds;
+			LibraryRootCatalog.Normalize(root);
+		}
+		if (sourceFormatVersion < 3)
+		{
+			state.PlaybackSession ??= new PlaybackSessionState();
+			state.PlaybackSession.RepeatMode = state.RepeatMode;
+			state.PlaybackSession.ShuffleMode = state.ShuffleMode;
+		}
+		PlaybackSessionService.Normalize(state);
 		foreach (TrackModel track in state.Tracks)
 		{
 			TrackModel current;

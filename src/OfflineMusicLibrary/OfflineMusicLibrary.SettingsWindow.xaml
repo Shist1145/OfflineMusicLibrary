@@ -344,6 +344,38 @@
             <CheckBox Name="SafePlaybackModeCheckBox" Content="启用稳定优先的安全播放模式" Margin="0,0,0,10" />
             <TextBlock Text="开启后实际播放将固定使用 DirectSound、软件解码、关闭可视化与空间音效，并增加媒体缓存；原有音效选择会保留，关闭安全模式后恢复。" Style="{StaticResource HintStyle}" Margin="0,0,0,22" />
             <Separator />
+			<TextBlock Text="NAS 断线与本机缓存" Style="{StaticResource SectionTitleStyle}" Margin="0,22,0,14" />
+			<CheckBox Name="WaitForOfflineRootsCheckBox" Content="曲库目录断线时保留队列和位置，并在后台等待重连" Margin="0,0,0,14" />
+			<Grid Margin="0,0,0,12">
+			  <Grid.ColumnDefinitions>
+				<ColumnDefinition Width="210" />
+				<ColumnDefinition Width="*" />
+			  </Grid.ColumnDefinitions>
+			  <Grid.RowDefinitions>
+				<RowDefinition Height="58" />
+				<RowDefinition Height="58" />
+			  </Grid.RowDefinitions>
+			  <TextBlock Text="目录检测超时" Style="{StaticResource SettingLabelStyle}" />
+			  <StackPanel Grid.Column="1" Orientation="Horizontal">
+				<Slider Name="NasProbeTimeoutSlider" Width="300" Minimum="1" Maximum="15" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="NasSettingSlider_ValueChanged" />
+				<TextBlock Name="NasProbeTimeoutText" Width="70" Margin="10,0,0,0" VerticalAlignment="Center" />
+			  </StackPanel>
+			  <TextBlock Grid.Row="1" Text="NAS 播放缓冲" Style="{StaticResource SettingLabelStyle}" />
+			  <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal">
+				<Slider Name="NasBufferSlider" Width="300" Minimum="5" Maximum="30" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="NasSettingSlider_ValueChanged" />
+				<TextBlock Name="NasBufferText" Width="70" Margin="10,0,0,0" VerticalAlignment="Center" />
+			  </StackPanel>
+			</Grid>
+			<TextBlock Text="检测在后台执行，不会让主窗口等待网络文件系统。重试间隔依次为 1、2、5、10 秒，之后转为每 30 秒低频等待；NAS 密码仍由 Windows 管理，本应用不会保存。" Style="{StaticResource HintStyle}" Margin="0,0,0,16" />
+			<WrapPanel Margin="0,0,0,10">
+			  <CheckBox Name="PersistentAssetCacheCheckBox" Content="在本机持久保存已读取的封面和歌词" Margin="0,0,24,8" VerticalAlignment="Center" />
+			  <TextBlock Text="容量上限" VerticalAlignment="Center" Margin="0,0,8,8" />
+			  <ComboBox Name="AssetCacheSizeCombo" Width="110" Margin="0,0,8,8" />
+			  <TextBlock Text="MiB" VerticalAlignment="Center" Margin="0,0,0,8" />
+			</WrapPanel>
+			<TextBlock Name="AssetCacheStatusText" Style="{StaticResource HintStyle}" Margin="0,0,0,10" />
+			<Button Content="清理本机封面/歌词缓存" Width="210" HorizontalAlignment="Left" Click="ClearAssetCacheButton_Click" Margin="0,0,0,22" />
+			<Separator />
             <TextBlock Text="状态与诊断" Style="{StaticResource SectionTitleStyle}" Margin="0,22,0,14" />
             <CheckBox Name="StateBackupCheckBox" Content="每次保存后保留可恢复的曲库与设置备份" Margin="0,0,0,10" />
             <TextBlock Text="如果异常退出或新版状态文件损坏，程序会优先读取最近一次有效备份；旧版 library.json 会自动迁移并与新版隔离。" Style="{StaticResource HintStyle}" Margin="0,0,0,16" />
@@ -499,14 +531,26 @@
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+			<RowDefinition Height="Auto" />
           </Grid.RowDefinitions>
-          <TextBlock Text="音乐文件夹" Style="{StaticResource SectionTitleStyle}" />
-          <ListBox Name="LibraryFoldersList" Grid.Row="1" MinHeight="300" BorderBrush="{DynamicResource LineBrush}" Background="{DynamicResource SurfaceBrush}" />
+		  <TextBlock Text="音乐文件夹与 NAS 状态" Style="{StaticResource SectionTitleStyle}" />
+		  <ListBox Name="LibraryFoldersList" Grid.Row="1" MinHeight="260" BorderBrush="{DynamicResource LineBrush}" Background="{DynamicResource SurfaceBrush}">
+			<ListBox.ItemTemplate>
+			  <DataTemplate>
+				<StackPanel Margin="10,8">
+				  <TextBlock Text="{Binding Path}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+				  <TextBlock Text="{Binding StatusText}" Style="{StaticResource HintStyle}" Margin="0,4,0,0" TextWrapping="Wrap" />
+				</StackPanel>
+			  </DataTemplate>
+			</ListBox.ItemTemplate>
+		  </ListBox>
           <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,12,0,16">
             <Button Content="添加文件夹" Margin="0,0,8,0" Click="AddLibraryFolderButton_Click" />
-            <Button Content="移除所选" Click="RemoveLibraryFolderButton_Click" />
+			<Button Content="移除所选" Margin="0,0,8,0" Click="RemoveLibraryFolderButton_Click" />
+			<Button Content="立即检测全部" Click="ProbeLibraryRootsButton_Click" />
           </StackPanel>
-          <CheckBox Name="ScanOnStartupCheckBox" Grid.Row="3" Content="程序启动时重新扫描曲库" />
+		  <TextBlock Grid.Row="3" Text="离线只会改变目录健康状态，不会清空歌曲、歌单、收藏或播放历史。映射盘和 UNC 路径都使用 Windows 已建立的 SMB 会话。" Style="{StaticResource HintStyle}" Margin="0,0,0,14" TextWrapping="Wrap" />
+		  <CheckBox Name="ScanOnStartupCheckBox" Grid.Row="4" Content="程序启动时重新扫描曲库" />
         </Grid>
       </TabItem>
     </TabControl>

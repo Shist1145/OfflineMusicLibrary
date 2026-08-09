@@ -2,7 +2,7 @@
   <img src="src/OfflineMusicLibrary/Assets/OfflineMusicLibrary-logo.png" width="128" alt="OfflineMusicLibrary logo" />
 </p>
 
-# 本地音乐库 1.6.3 / OfflineMusicLibrary 1.6.3
+# 本地音乐库 1.7.0 Preview 1 / OfflineMusicLibrary 1.7.0 Preview 1
 
 [![Build and regression checks](https://github.com/Shist1145/OfflineMusicLibrary/actions/workflows/release.yml/badge.svg)](https://github.com/Shist1145/OfflineMusicLibrary/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/Shist1145/OfflineMusicLibrary?display_name=tag)](https://github.com/Shist1145/OfflineMusicLibrary/releases/latest)
@@ -11,9 +11,26 @@
 
 OfflineMusicLibrary 是一个以本地文件为准的离线音乐管理与播放工具。曲库索引、歌单、收藏、播放记录、歌词样式和播放器设置都保存在本机；应用不会要求登录音乐账号，也不会把个人曲库上传到服务器。
 
-> **1.6.3 是 Windows x64 完整版。** 已发布的 Linux/macOS 安装包仍是 [v1.4.0 跨平台预览版](https://github.com/Shist1145/OfflineMusicLibrary/releases/tag/v1.4.0)。跨平台源码已同步网易云大歌单与 Off Vocal 匹配修复，但界面和功能仍未与 Windows 完整版完全一致。
+> **1.7.0-preview.1 是 Windows x64 预览版。** 它在 1.6.3 稳定版之上加入 NAS Foundation、安全边界和新的稳定性保护；真实 NAS 休眠/唤醒、凭据失效、DAC 与 HDMI 功放仍需更多实机验收。已发布的 Linux/macOS 安装包仍是 [v1.4.0 跨平台预览版](https://github.com/Shist1145/OfflineMusicLibrary/releases/tag/v1.4.0)。
 
-OfflineMusicLibrary is a local-first music manager and player. Version 1.6.3 is the full Windows x64 release. The published Linux/macOS packages remain v1.4.0 previews, although their source shares the safer NetEase playlist matching rules.
+OfflineMusicLibrary is a local-first music manager and player. Version 1.7.0-preview.1 is a Windows x64 preview focused on NAS resilience, bounded resource use, and safer local caching. The latest stable Windows release remains v1.6.3; published Linux/macOS packages remain v1.4.0 previews.
+
+## 1.7.0-preview.1：NAS Foundation 与安全加固
+
+本预览版按 [NAS 与家庭影院补强计划](docs/OfflineMusicLibrary-1.6.3_NAS家庭影院补强计划.md) 落地第一阶段，同时修复本轮安全审计发现的本地路径与资源耗尽风险。
+
+- 每个本机、移动、UNC/SMB 或映射盘曲库根目录都有稳定 ID、类型、在线状态、延迟、最近在线时间和错误信息。
+- 播放前与扫描入口不再在界面线程同步等待网络路径；NAS 离线会保留曲库、队列和播放位置，并按有上限的退避策略等待恢复。
+- 完整播放会话会保存队列顺序、当前索引、位置、循环/随机模式和最近随机历史；关闭自动播放也不会丢掉原队列。
+- 已读取的封面和歌词可以保存到本机容量受控缓存，NAS 离线时继续显示；清理缓存不会改写媒体文件或 NAS。
+- NAS 播放可使用 5–30 秒缓冲，并同时配置 LibVLC 的文件、光盘与网络缓存。
+- 缓存清理、统计和淘汰会跳过 junction/symlink/reparse point，并在删除前再次确认目标仍位于缓存根目录。
+- 状态、歌词、封面、播放历史、缓存条目和网易云响应都有明确大小上限；超限内容在完整读入或解码前被拒绝，主状态超限时仍会继续尝试两级备份。
+- NAS/文件探测使用有界并发和有界在途队列；同一路径复用同一探测任务，避免大量失联路径耗尽线程池。
+- 曲库扫描不跟随目录或媒体文件的 reparse point；网易云模糊匹配按标题索引缩小候选，并限制单曲候选图规模，降低超大曲库导入的 CPU 峰值。
+- GitHub Actions 改为最小权限、固定 action 提交、禁用持久化检出凭据，并使用可复现且拒绝链接逃逸的 Windows ZIP 脚本。
+
+这些能力已经通过临时目录、稀疏超大文件、模拟 HTTP 响应和真实临时 junction 回归，但尚未把真实 NAS 休眠/唤醒、Wi-Fi 断线、Windows 凭据失效、DAC 与 HDMI 功放验收冒充为完成。详见 [CHANGELOG](CHANGELOG.md)、[安全审计报告](docs/SECURITY_AUDIT_1.7.0-preview.1.md) 和 [安全报告方式](SECURITY.md)。
 
 ## 1.6.3 解决了什么
 
@@ -79,7 +96,7 @@ OfflineMusicLibrary is a local-first music manager and player. Version 1.6.3 is 
 ## 下载与安装
 
 1. 打开 [GitHub Releases](https://github.com/Shist1145/OfflineMusicLibrary/releases)。
-2. 下载 `OfflineMusicLibrary-1.6.3-windows-x64.zip`。
+2. 下载 `OfflineMusicLibrary-1.7.0-preview.1-windows-x64.zip`，并可用同一 Release 中的 `SHA256SUMS-1.7.0-preview.1.txt` 核对完整性。
 3. 完整解压到一个可写目录，不要直接在压缩包内运行。
 4. 运行 `OfflineMusicLibrary.exe`。
 
@@ -87,7 +104,7 @@ Windows 包是自包含 x64 版本，不要求另行安装 .NET。LibVLC 运行�
 
 ### 从旧版本更新
 
-- 退出旧版后，解压 1.6.3 到新的程序目录。
+- 退出旧版后，解压 1.7.0-preview.1 到新的程序目录。
 - 不需要复制 `%LOCALAPPDATA%\OfflineMusicLibrary`；新版本会继续读取原状态。
 - 建议保留旧程序目录几天，确认新版本正常后再手动删除。
 - 不要删除 `library-v2.json` 来解决界面问题；先查看日志和备份，必要时按 [数据恢复说明](docs/DATA_SAFETY.md) 操作。
@@ -103,6 +120,7 @@ Windows 完整版默认使用：
 ├─ library-v2.previous.json  上上代有效状态
 ├─ library-v2.write.lock     跨保存方写入锁
 ├─ playlist-artwork\         自定义歌单封面
+├─ asset-cache\              容量受控的本机歌词/封面缓存
 └─ logs\                     诊断日志
 ```
 
@@ -126,6 +144,10 @@ dotnet publish src/OfflineMusicLibrary/OfflineMusicLibrary.csproj `
     -c Release -r win-x64 --self-contained true `
     -p:DebugType=None -p:DebugSymbols=false `
     -o artifacts/windows
+
+py -3 packaging/create_windows_archive.py `
+    --source artifacts/windows `
+    --output artifacts/OfflineMusicLibrary-1.7.0-preview.1-windows-x64.zip
 ```
 
 跨平台预览源码可以单独构建：
@@ -138,12 +160,14 @@ dotnet build CrossPlatform/OfflineMusicLibrary.CrossPlatform.csproj -c Release
 
 - 专辑身份与社团整理
 - 增量扫描、离线根目录保留、修改文件刷新与取消
+- 扫描与缓存跳过 junction/symlink/reparse point，且缓存删除不越过根目录
 - 三轨歌词解析与样式
 - 迷你播放器和播放页状态
 - Windows 与跨平台网易云 700 首批次重试、Off Vocal 隔离和全局匹配
 - 歌单安全同步与维护
 - 推荐和播放历史导入
 - 单实例、播放恢复、状态轮换、损坏恢复、保存失败传播和 6,000 首大状态性能门槛
+- 状态、歌词、封面、播放历史、缓存和 HTTP 响应的超限拒绝，以及 NAS 探测并发/队列上限
 
 ## 仓库结构
 
@@ -153,15 +177,16 @@ CrossPlatform/               Avalonia 跨平台预览源码
 tests/                       无个人数据的确定性回归检查
 tools/                       可选的状态加载/保存基准工具
 docs/                        导入与数据安全说明
-packaging/                   Linux/macOS 预览版打包资料
+packaging/                   Windows 可复现 ZIP 与 Linux/macOS 预览版打包资料
 .github/workflows/           构建、测试、发布和 SHA-256 工作流
 ```
 
 ## 当前边界
 
 - 这是本地播放器与迁移工具，不是网易云客户端，也不提供在线流媒体播放或歌曲下载。
-- 网易云公开接口可能临时限流或不返回部分详情；1.6.3 会保留 ID 和旧歌单内容，但无法凭空补出本地没有的媒体文件。
+- 网易云公开接口可能临时限流或不返回部分详情；1.7.0-preview.1 会保留 ID 和旧歌单内容，但无法凭空补出本地没有的媒体文件。
 - Linux/macOS 已发布包仍是 1.4.0 预览版，缺少部分 Windows 播放页、桌面集成、歌词样式和稳定性设置。
+- 本预览版尚未完成真实 NAS、Windows 凭据过期、USB DAC、HDMI 功放和多声道设备的全面实机验收；稳定版仍为 v1.6.3。
 - 自动测试可以证明匹配、保存和状态迁移规则，但不能替代所有显卡、音频设备和桌面环境上的人工播放验收。
 
 ## 反馈问题

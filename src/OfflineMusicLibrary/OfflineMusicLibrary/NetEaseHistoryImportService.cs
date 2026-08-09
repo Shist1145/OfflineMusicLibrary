@@ -39,7 +39,10 @@ public static class NetEaseHistoryImportService
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
             throw new FileNotFoundException("找不到要导入的网易云播放历史文件。", filePath);
 
-        var content = await File.ReadAllTextAsync(filePath, cancellationToken);
+        var content = await BoundedFileReader.ReadAllTextAsync(
+            filePath,
+            ContentReadLimits.HistoryImportBytes,
+            cancellationToken);
         var entries = Parse(content, Path.GetExtension(filePath));
         if (entries.Count == 0)
             throw new FormatException("文件中没有识别到播放历史。支持网易云记录接口 JSON，以及含歌名、歌手和播放次数列的 CSV / TSV。");

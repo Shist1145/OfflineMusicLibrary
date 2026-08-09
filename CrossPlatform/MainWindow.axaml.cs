@@ -635,7 +635,19 @@ public sealed partial class MainWindow : Window
                 {
                     bitmap = await Task.Run(() =>
                     {
-                        using var stream = File.OpenRead(group.Key);
+                        FileInfo info = new(group.Key);
+                        if (!info.Exists || info.Length is <= 0 or > ContentReadLimits.ArtworkBytes ||
+                            (info.Attributes & FileAttributes.ReparsePoint) != 0)
+                        {
+                            throw new InvalidDataException("Artwork file is unsafe or exceeds the 32 MiB safety limit.");
+                        }
+                        using var stream = new FileStream(
+                            group.Key,
+                            FileMode.Open,
+                            FileAccess.Read,
+                            FileShare.Read,
+                            64 * 1024,
+                            FileOptions.SequentialScan);
                         return Bitmap.DecodeToWidth(stream, 180);
                     });
                     lock (_coverCache)

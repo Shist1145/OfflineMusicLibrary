@@ -102,14 +102,14 @@ public sealed class PlaybackService : IDisposable
 		CreateInitialEngine("Off", "DirectSound", "Off", "Off", 76);
 	}
 
-	public void Play(string path, AppState state, bool isVideo)
+	public void Play(string path, AppState state, bool isVideo, string? sidecarSubtitlePath = null)
 	{
 		_requestedRate = Math.Clamp(state.PlaybackRate, 0.25, 4.0);
 		_preferredAudioDeviceId = state.PreferredAudioDeviceId;
-		PlaybackEngineProfile profile = PlaybackStabilityService.Resolve(state, isVideo);
+		PlaybackEngineProfile profile = PlaybackStabilityService.Resolve(state, isVideo, path);
 		EnsureEngine(profile.VisualizationMode, profile.AudioBackend, profile.SpatialAudioMode, profile.EqualizerPreset);
 		MediaPlayer player = Player;
-		Media next = CreateMedia(_libVlc, path, profile);
+		Media next = CreateMedia(_libVlc, path, profile, sidecarSubtitlePath);
 		Media old;
 		CancellationTokenSource parseCancellation;
 		lock (_engineSync)
@@ -123,7 +123,7 @@ public sealed class PlaybackService : IDisposable
 			Interlocked.Increment(ref _playRequestVersion);
 			ResetCachedPlaybackState();
 		}
-		DiagnosticLog.Write("PLAY", $"Opening '{path}' via {_engineAudioBackend}, cache {profile.CacheMilliseconds} ms, safe={state.SafePlaybackMode}");
+		DiagnosticLog.Write("PLAY", $"Opening '{path}' via {_engineAudioBackend}, cache {profile.CacheMilliseconds} ms, network={profile.IsNetworkSource}, safe={state.SafePlaybackMode}");
 		Volatile.Write(ref _desiredIsPlaying, 1);
 		bool started;
 		try
@@ -341,10 +341,10 @@ public sealed class PlaybackService : IDisposable
 		}, "stop");
 	}
 
-	public async Task<bool> RecoverAsync(string path, AppState state, bool isVideo, long resumeAtMilliseconds, CancellationToken cancellationToken = default(CancellationToken))
+	public async Task<bool> RecoverAsync(string path, AppState state, bool isVideo, long resumeAtMilliseconds, string? sidecarSubtitlePath = null, CancellationToken cancellationToken = default(CancellationToken))
 	{
 		int expectedRequest = Volatile.Read(in _playRequestVersion);
-		PlaybackEngineProfile profile = PlaybackStabilityService.Resolve(state, isVideo);
+		PlaybackEngineProfile profile = PlaybackStabilityService.Resolve(state, isVideo, path);
 		string visualization = profile.VisualizationMode;
 		string backend = NormalizeAudioBackend(profile.AudioBackend);
 		string spatialAudio = AudioEffectPresets.NormalizeSpatialAudio(profile.SpatialAudioMode);
@@ -355,7 +355,7 @@ public sealed class PlaybackService : IDisposable
 		Media media;
 		try
 		{
-			media = CreateMedia(fresh.LibVlc, path, profile);
+			media = CreateMedia(fresh.LibVlc, path, profile, sidecarSubtitlePath);
 		}
 		catch
 		{
@@ -663,15 +663,19 @@ public sealed class PlaybackService : IDisposable
 		}
 	}
 
-	private static Media CreateMedia(LibVLC libVlc, string path, PlaybackEngineProfile profile)
+	private static Media CreateMedia(LibVLC libVlc, string path, PlaybackEngineProfile profile, string? sidecarSubtitlePath)
 	{
 		Media media = new Media(libVlc, new Uri(path));
-		int cacheMilliseconds = Math.Clamp(profile.CacheMilliseconds, 500, 5000);
+		int cacheMilliseconds = Math.Clamp(profile.CacheMilliseconds, 500, 30000);
 		media.AddOption($":file-caching={cacheMilliseconds}");
 		media.AddOption($":disc-caching={cacheMilliseconds}");
+		if (profile.IsNetworkSource)
+		{
+			media.AddOption($":network-caching={cacheMilliseconds}");
+		}
 		AddHardwareOptions(media, profile.HardwareDecoding);
 		AddVideoOutputOption(media, profile.VideoOutput);
-		AddSidecarSubtitle(media, path);
+		AddSidecarSubtitle(media, sidecarSubtitlePath);
 		return media;
 	}
 
@@ -912,13 +916,11 @@ public sealed class PlaybackService : IDisposable
 		};
 	}
 
-	private static void AddSidecarSubtitle(Media media, string mediaPath)
+	private static void AddSidecarSubtitle(Media media, string? subtitlePath)
 	{
-		string stem = Path.Combine(Path.GetDirectoryName(mediaPath) ?? "", Path.GetFileNameWithoutExtension(mediaPath));
-		string subtitle = new string[3] { ".ass", ".srt", ".vtt" }.Select((string extension) => stem + extension).FirstOrDefault(File.Exists);
-		if (subtitle != null)
+		if (!string.IsNullOrWhiteSpace(subtitlePath))
 		{
-			media.AddOption(":sub-file=" + subtitle);
+			media.AddOption(":sub-file=" + subtitlePath);
 		}
 	}
 }

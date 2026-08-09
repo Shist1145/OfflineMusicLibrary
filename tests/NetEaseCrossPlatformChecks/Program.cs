@@ -7,7 +7,31 @@ using System.Text.RegularExpressions;
 await EmptyLargeBatchesRetryInSmallGroupsAsync();
 await VocalAndInstrumentalVersionsStaySeparatedAsync();
 await GlobalAssignmentProtectsConstrainedTracksAsync();
+await OversizedResponseIsRejectedAsync();
 Console.WriteLine("Cross-platform NetEase playlist checks passed.");
+
+static async Task OversizedResponseIsRejectedAsync()
+{
+	using HttpClient client = new(new OversizedPlaylistHandler());
+	NetEasePlaylistService service = new(client);
+	bool rejected = false;
+	try
+	{
+		_ = await service.ImportAsync("823456789", []);
+	}
+	catch (InvalidOperationException exception)
+	{
+		for (Exception? current = exception; current != null; current = current.InnerException)
+		{
+			if (current is InvalidDataException)
+			{
+				rejected = true;
+				break;
+			}
+		}
+	}
+	Require(rejected, "The cross-platform importer must reject an oversized response before buffering it.");
+}
 
 static async Task EmptyLargeBatchesRetryInSmallGroupsAsync()
 {
@@ -106,6 +130,34 @@ static void Require(bool condition, string message)
 }
 
 internal sealed record FakeSong(string Id, string Title, string Artist, string Album, long DurationMs);
+
+internal sealed class OversizedPlaylistHandler : HttpMessageHandler
+{
+	protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+		Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+		{
+			Content = new DeclaredLengthContent(32L * 1024L * 1024L + 1L)
+		});
+}
+
+internal sealed class DeclaredLengthContent : HttpContent
+{
+	private readonly long _length;
+
+	public DeclaredLengthContent(long length)
+	{
+		_length = length;
+		Headers.ContentLength = length;
+	}
+
+	protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) => Task.CompletedTask;
+
+	protected override bool TryComputeLength(out long length)
+	{
+		length = _length;
+		return true;
+	}
+}
 
 internal sealed class PlaylistApiHandler : HttpMessageHandler
 {

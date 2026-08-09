@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace OfflineMusicLibrary;
@@ -57,6 +58,59 @@ public static partial class LyricsService
 			}
 		}
 		return result.OrderBy((LyricLine line) => line.TimeMs).ToList();
+	}
+
+	public static List<LyricLine> LoadForTrack(TrackModel track)
+	{
+		ArgumentNullException.ThrowIfNull(track);
+		AssetSourceStamp indexedStamp = new(Math.Max(0, track.FileSize), Math.Max(0, track.LastWriteTimeUtcTicks));
+		if (TryLoadCached(track.Id, indexedStamp, allowStale: false, out List<LyricLine> cached))
+		{
+			return cached;
+		}
+		List<LyricLine> loaded = LoadForTrack(track.FilePath);
+		if (loaded.Count > 0)
+		{
+			try
+			{
+				byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(loaded);
+				PersistentAssetCache.Write("lyrics", track.Id, indexedStamp, bytes);
+			}
+			catch (Exception ex) when (ex is JsonException or NotSupportedException)
+			{
+				DiagnosticLog.Write("ASSET_CACHE", "Could not serialize lyrics for '" + track.FilePath + "'", ex);
+			}
+			return loaded;
+		}
+		return TryLoadCached(track.Id, null, allowStale: true, out cached) ? cached : loaded;
+	}
+
+	private static bool TryLoadCached(
+		string trackId,
+		AssetSourceStamp? sourceStamp,
+		bool allowStale,
+		out List<LyricLine> lines)
+	{
+		lines = new List<LyricLine>();
+		if (!PersistentAssetCache.TryRead("lyrics", trackId, sourceStamp, allowStale, out byte[] bytes))
+		{
+			return false;
+		}
+		try
+		{
+			lines = JsonSerializer.Deserialize<List<LyricLine>>(bytes) ?? new List<LyricLine>();
+			foreach (LyricLine line in lines)
+			{
+				line.IsCurrent = false;
+			}
+			return lines.Count > 0;
+		}
+		catch (Exception ex) when (ex is JsonException or NotSupportedException)
+		{
+			DiagnosticLog.Write("ASSET_CACHE", $"Could not deserialize cached lyrics for '{trackId}'", ex);
+			lines = new List<LyricLine>();
+			return false;
+		}
 	}
 
 	private static void ClassifyInlineLyrics(IReadOnlyList<string> texts, out string romanization, out string translation)
@@ -143,7 +197,7 @@ public static partial class LyricsService
 		{
 			lines = ReadAllLines(path);
 		}
-		catch
+		catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or NotSupportedException or DecoderFallbackException or ArgumentException)
 		{
 			return result;
 		}
@@ -197,7 +251,7 @@ public static partial class LyricsService
 
 	private static string[] ReadAllLines(string path)
 	{
-		byte[] bytes = File.ReadAllBytes(path);
+		byte[] bytes = BoundedFileReader.ReadAllBytes(path, ContentReadLimits.LyricsFileBytes);
 		try
 		{
 			return SplitLines(new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(bytes));

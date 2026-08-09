@@ -133,6 +133,54 @@ try
 	Require(cancellationSentinel.FileSize == 0 && cancellationSentinel.LastWriteTimeUtcTicks == 0,
 		"A cancelled scan must not mutate the caller's active track objects.");
 
+	string linkedOutsideDirectory = Path.Combine(availableRoot, "linked-outside");
+	Directory.CreateDirectory(Path.GetDirectoryName(outsideTrackPath)!);
+	await File.WriteAllBytesAsync(outsideTrackPath, [11]);
+	bool scanReparsePointCreated = false;
+	try
+	{
+		Directory.CreateSymbolicLink(linkedOutsideDirectory, Path.GetDirectoryName(outsideTrackPath)!);
+		scanReparsePointCreated = (File.GetAttributes(linkedOutsideDirectory) & FileAttributes.ReparsePoint) != 0;
+	}
+	catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException)
+	{
+		if (OperatingSystem.IsWindows())
+		{
+			ProcessStartInfo junctionInfo = new("cmd.exe")
+			{
+				UseShellExecute = false,
+				CreateNoWindow = true,
+				RedirectStandardOutput = true,
+				RedirectStandardError = true
+			};
+			junctionInfo.ArgumentList.Add("/d");
+			junctionInfo.ArgumentList.Add("/c");
+			junctionInfo.ArgumentList.Add("mklink");
+			junctionInfo.ArgumentList.Add("/J");
+			junctionInfo.ArgumentList.Add(linkedOutsideDirectory);
+			junctionInfo.ArgumentList.Add(Path.GetDirectoryName(outsideTrackPath)!);
+			using Process? junctionProcess = Process.Start(junctionInfo);
+			if (junctionProcess != null)
+			{
+				await junctionProcess.WaitForExitAsync();
+				scanReparsePointCreated = junctionProcess.ExitCode == 0 &&
+					Directory.Exists(linkedOutsideDirectory) &&
+					(File.GetAttributes(linkedOutsideDirectory) & FileAttributes.ReparsePoint) != 0;
+			}
+		}
+		if (!scanReparsePointCreated)
+		{
+			Console.WriteLine($"Reparse-point scan test skipped on this host: {exception.GetType().Name}");
+		}
+	}
+	if (scanReparsePointCreated)
+	{
+		List<TrackModel> reparseResult = await service.ScanAsync([availableRoot], []);
+		Require(reparseResult.All(track => !track.FilePath.StartsWith(linkedOutsideDirectory, StringComparison.OrdinalIgnoreCase)),
+			"Library scanning must not follow a directory junction or symbolic link outside the configured root.");
+		Directory.Delete(linkedOutsideDirectory);
+	}
+
 	if (args.Length > 0 && File.Exists(args[0]))
 	{
 		await using FileStream stream = File.OpenRead(args[0]);

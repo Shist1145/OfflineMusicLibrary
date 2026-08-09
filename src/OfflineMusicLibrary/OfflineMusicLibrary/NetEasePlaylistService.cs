@@ -66,6 +66,10 @@ public sealed partial class NetEasePlaylistService
 
 	private const int PlaylistRequestAttempts = 3;
 
+	private const int FullCandidateScanLimit = 5000;
+
+	private const int MaximumMatchOptionsPerTrack = 64;
+
 	private readonly HttpClient _httpClient;
 
 	private static readonly HashSet<char> MeaningfulTitleSymbols = new HashSet<char>
@@ -87,7 +91,7 @@ public sealed partial class NetEasePlaylistService
 		_httpClient = httpClient;
 		if (!_httpClient.DefaultRequestHeaders.UserAgent.Any())
 		{
-			_httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 OfflineMusicLibrary/1.6.3");
+			_httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 OfflineMusicLibrary/1.7.0-preview.1");
 		}
 		HttpRequestHeaders defaultRequestHeaders = _httpClient.DefaultRequestHeaders;
 		if ((object)defaultRequestHeaders.Referrer == null)
@@ -141,27 +145,41 @@ public sealed partial class NetEasePlaylistService
 
 	public static string? ExtractPlaylistId(string source)
 	{
+		if (string.IsNullOrWhiteSpace(source) || source.Length > 4096)
+		{
+			return null;
+		}
 		string trimmed = source.Trim();
-		if (trimmed.All(char.IsDigit) && trimmed.Length > 0)
+		if (trimmed.All(char.IsDigit) && trimmed.Length is > 0 and <= 20)
 		{
 			return trimmed;
 		}
 		Match match = PlaylistIdRegex().Match(trimmed);
 		if (match.Success)
 		{
-			return match.Groups[1].Value;
+			string value = match.Groups[1].Value;
+			return value.Length <= 20 ? value : null;
 		}
 		match = StandaloneLongNumberRegex().Match(trimmed);
 		if (!match.Success)
 		{
 			return null;
 		}
-		return match.Groups[1].Value;
+		string standalone = match.Groups[1].Value;
+		return standalone.Length <= 20 ? standalone : null;
 	}
 
 	private static HttpClient CreateHttpClient()
 	{
-		return new HttpClient
+		SocketsHttpHandler handler = new()
+		{
+			AllowAutoRedirect = false,
+			UseCookies = false,
+			ConnectTimeout = TimeSpan.FromSeconds(10),
+			MaxConnectionsPerServer = 4,
+			MaxResponseHeadersLength = 64
+		};
+		return new HttpClient(handler, disposeHandler: true)
 		{
 			Timeout = TimeSpan.FromSeconds(20L)
 		};
@@ -174,21 +192,15 @@ public sealed partial class NetEasePlaylistService
 		{
 			try
 			{
-				using HttpResponseMessage response = await _httpClient.GetAsync(url, cancellationToken);
+				using HttpResponseMessage response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 				response.EnsureSuccessStatusCode();
-				JsonDocument result;
-				await using (Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken))
-				{
-					CancellationToken cancellationToken2 = cancellationToken;
-					result = await JsonDocument.ParseAsync(stream, default(JsonDocumentOptions), cancellationToken2);
-				}
-				return result;
+				return await ReadJsonDocumentAsync(response, ContentReadLimits.PlaylistResponseBytes, cancellationToken).ConfigureAwait(false);
 			}
 			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 			{
 				throw;
 			}
-			catch (Exception ex2)
+			catch (Exception ex2) when (IsExpectedRequestException(ex2))
 			{
 				lastException = ex2;
 				DiagnosticLog.Write("NetEaseImport", $"歌单请求失败（第 {attempt} 次）：{url}", ex2);
@@ -298,22 +310,17 @@ public sealed partial class NetEasePlaylistService
 		_ = 3;
 		try
 		{
-			using HttpResponseMessage response = await _httpClient.GetAsync(url, cancellationToken);
+			using HttpResponseMessage response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 			response.EnsureSuccessStatusCode();
-			List<NetEaseTrack> result;
-			await using (Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken))
-			{
-				CancellationToken cancellationToken2 = cancellationToken;
-				using JsonDocument document = await JsonDocument.ParseAsync(stream, default(JsonDocumentOptions), cancellationToken2);
-				result = ((document.RootElement.TryGetProperty("songs", out var songs) && songs.ValueKind == JsonValueKind.Array) ? songs.EnumerateArray().Select(ReadTrack).ToList() : new List<NetEaseTrack>());
-			}
+			using JsonDocument document = await ReadJsonDocumentAsync(response, ContentReadLimits.TrackDetailResponseBytes, cancellationToken).ConfigureAwait(false);
+			List<NetEaseTrack> result = ((document.RootElement.TryGetProperty("songs", out var songs) && songs.ValueKind == JsonValueKind.Array) ? songs.EnumerateArray().Select(ReadTrack).ToList() : new List<NetEaseTrack>());
 			return result;
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
 			throw;
 		}
-		catch (Exception exception)
+		catch (Exception exception) when (IsExpectedRequestException(exception))
 		{
 			DiagnosticLog.Write("NetEaseImport", "歌曲详情请求失败：" + url, exception);
 			return new List<NetEaseTrack>();
@@ -364,6 +371,7 @@ public sealed partial class NetEasePlaylistService
 			.Select(group => group.OrderBy(track => track.IsEncryptedNcm).First())
 			.ToList();
 		List<LocalMatchCandidate> candidates = uniqueLocal.Select(LocalMatchCandidate.Create).ToList();
+		Dictionary<char, List<int>> candidatesByTitleInitial = BuildCandidateTitleIndex(candidates);
 		Dictionary<string, List<int>> byCloudId = candidates
 			.SelectMany((candidate, localIndex) => candidate.Track.GetCloudIds().Select(id => new { id, localIndex }))
 			.GroupBy(item => item.id, StringComparer.OrdinalIgnoreCase)
@@ -387,6 +395,7 @@ public sealed partial class NetEasePlaylistService
 					.Where(option => option.Score > 0)
 					.OrderByDescending(option => option.Score)
 					.ThenBy(option => option.LocalIndex)
+					.Take(MaximumMatchOptionsPerTrack)
 					.ToList();
 				if (options.Count > 0)
 				{
@@ -408,12 +417,17 @@ public sealed partial class NetEasePlaylistService
 				continue;
 			}
 			NetEaseTrack remoteTrack = remote[remoteIndex];
-			List<MatchOption> options = candidates
-				.Select((candidate, localIndex) => new
+			List<string> remoteTitles = BuildTitleVariants(new[] { remoteTrack.Title });
+			IReadOnlyList<int> candidateIndexes = FindCandidateIndexes(
+				remoteTitles,
+				candidatesByTitleInitial,
+				candidates.Count);
+			List<MatchOption> options = candidateIndexes
+				.Select(localIndex => new
 				{
-					Candidate = candidate,
+					Candidate = candidates[localIndex],
 					LocalIndex = localIndex,
-					RawScore = localOwners[localIndex] >= 0 ? 0 : MatchScore(candidate, remoteTrack)
+					RawScore = localOwners[localIndex] >= 0 ? 0 : MatchScore(candidates[localIndex], remoteTrack, remoteTitles)
 				})
 				.Where(item => item.RawScore > 0)
 				.Select(item => new MatchOption(
@@ -422,6 +436,7 @@ public sealed partial class NetEasePlaylistService
 					(item.Candidate.Track.HasCloudIds && !item.Candidate.Track.HasCloudId(remoteTrack.Id) ? 30 : 0)))
 				.OrderByDescending(option => option.Score)
 				.ThenBy(option => option.LocalIndex)
+				.Take(MaximumMatchOptionsPerTrack)
 				.ToList();
 			if (options.Count > 0)
 			{
@@ -437,9 +452,18 @@ public sealed partial class NetEasePlaylistService
 			{
 				continue;
 			}
-			int currentScore = MatchScore(candidates[existingLocalIndex], remote[remoteIndex]);
-			MatchOption? playable = candidates
-				.Select((candidate, localIndex) => new MatchOption(localIndex, localOwners[localIndex] < 0 && !candidate.Track.IsEncryptedNcm ? MatchScore(candidate, remote[remoteIndex]) : 0))
+			List<string> remoteTitles = BuildTitleVariants(new[] { remote[remoteIndex].Title });
+			IReadOnlyList<int> candidateIndexes = FindCandidateIndexes(
+				remoteTitles,
+				candidatesByTitleInitial,
+				candidates.Count);
+			int currentScore = MatchScore(candidates[existingLocalIndex], remote[remoteIndex], remoteTitles);
+			MatchOption? playable = candidateIndexes
+				.Select(localIndex => new MatchOption(
+					localIndex,
+					localOwners[localIndex] < 0 && !candidates[localIndex].Track.IsEncryptedNcm
+						? MatchScore(candidates[localIndex], remote[remoteIndex], remoteTitles)
+						: 0))
 				.Where(option => option.Score > 0 && option.Score >= currentScore - PlayablePreferenceBonus)
 				.OrderByDescending(option => option.Score)
 				.ThenBy(option => option.LocalIndex)
@@ -467,7 +491,10 @@ public sealed partial class NetEasePlaylistService
 				TrackModel match = candidates[localIndex].Track;
 				if (!string.IsNullOrWhiteSpace(remote[remoteIndex].Title))
 				{
-					foreach (TrackModel staleOwner in local.Where(track => !ReferenceEquals(track, match) && track.HasCloudId(remote[remoteIndex].Id)))
+					IEnumerable<TrackModel> staleOwners = byCloudId.TryGetValue(remote[remoteIndex].Id, out List<int>? ownerIndexes)
+						? ownerIndexes.Select(index => candidates[index].Track)
+						: [];
+					foreach (TrackModel staleOwner in staleOwners.Where(track => !ReferenceEquals(track, match)))
 					{
 						if (staleOwner.ForgetCloudId(remote[remoteIndex].Id))
 						{
@@ -521,6 +548,47 @@ public sealed partial class NetEasePlaylistService
 		}
 	}
 
+	private static async Task<JsonDocument> ReadJsonDocumentAsync(
+		HttpResponseMessage response,
+		int maximumBytes,
+		CancellationToken cancellationToken)
+	{
+		long? declaredLength = response.Content.Headers.ContentLength;
+		if (declaredLength is > 0 && declaredLength > maximumBytes)
+		{
+			throw new InvalidDataException($"HTTP response exceeds the {maximumBytes / 1024 / 1024} MiB safety limit.");
+		}
+		int capacity = declaredLength is > 0 and <= int.MaxValue
+			? (int)declaredLength.Value
+			: Math.Min(64 * 1024, maximumBytes);
+		using MemoryStream buffer = new(capacity);
+		await using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+		byte[] chunk = new byte[64 * 1024];
+		int total = 0;
+		while (true)
+		{
+			int read = await stream.ReadAsync(chunk.AsMemory(), cancellationToken).ConfigureAwait(false);
+			if (read == 0)
+			{
+				break;
+			}
+			if (read > maximumBytes - total)
+			{
+				throw new InvalidDataException($"HTTP response exceeds the {maximumBytes / 1024 / 1024} MiB safety limit.");
+			}
+			await buffer.WriteAsync(chunk.AsMemory(0, read), cancellationToken).ConfigureAwait(false);
+			total += read;
+		}
+		buffer.Position = 0;
+		return await JsonDocument.ParseAsync(buffer, default(JsonDocumentOptions), cancellationToken).ConfigureAwait(false);
+	}
+
+	private static bool IsExpectedRequestException(Exception exception)
+	{
+		return exception is HttpRequestException or IOException or InvalidDataException or JsonException or OperationCanceledException or
+			NotSupportedException or ArgumentException;
+	}
+
 	private static bool TryAssign(
 		int remoteIndex,
 		IReadOnlyDictionary<int, List<MatchOption>> optionsByRemote,
@@ -563,11 +631,18 @@ public sealed partial class NetEasePlaylistService
 
 	private static int MatchScore(LocalMatchCandidate candidate, NetEaseTrack remoteTrack)
 	{
+		return MatchScore(candidate, remoteTrack, BuildTitleVariants(new[] { remoteTrack.Title }));
+	}
+
+	private static int MatchScore(
+		LocalMatchCandidate candidate,
+		NetEaseTrack remoteTrack,
+		IReadOnlyList<string> remoteTitles)
+	{
 		if (candidate.IsInstrumental != HasInstrumentalMarker(new[] { remoteTrack.Title }))
 		{
 			return 0;
 		}
-		List<string> remoteTitles = BuildTitleVariants(new string[1] { remoteTrack.Title });
 		int titleScore = candidate.TitleVariants.SelectMany((string localTitle) => remoteTitles.Select((string remoteTitle) => TitleSimilarity(localTitle, remoteTitle))).DefaultIfEmpty(0).Max();
 		if (titleScore < 68)
 		{
@@ -581,6 +656,51 @@ public sealed partial class NetEasePlaylistService
 		}
 		int durationScore = DurationScore(candidate.DurationMs, remoteTrack.DurationMs);
 		return titleScore * 10 + artistScore * 6 + albumScore * 3 + durationScore * 4;
+	}
+
+	private static Dictionary<char, List<int>> BuildCandidateTitleIndex(IReadOnlyList<LocalMatchCandidate> candidates)
+	{
+		Dictionary<char, List<int>> result = new();
+		for (int index = 0; index < candidates.Count; index++)
+		{
+			foreach (char initial in candidates[index].TitleVariants
+				.Where(value => value.Length > 0)
+				.Select(value => value[0])
+				.Distinct())
+			{
+				if (!result.TryGetValue(initial, out List<int>? indexes))
+				{
+					indexes = result[initial] = new List<int>();
+				}
+				indexes.Add(index);
+			}
+		}
+		return result;
+	}
+
+	private static IReadOnlyList<int> FindCandidateIndexes(
+		IReadOnlyList<string> remoteTitles,
+		IReadOnlyDictionary<char, List<int>> candidatesByTitleInitial,
+		int candidateCount)
+	{
+		HashSet<int> indexes = new();
+		foreach (char initial in remoteTitles
+			.Where(value => value.Length > 0)
+			.Select(value => value[0])
+			.Distinct())
+		{
+			if (candidatesByTitleInitial.TryGetValue(initial, out List<int>? matching))
+			{
+				indexes.UnionWith(matching);
+			}
+		}
+		if (indexes.Count > 0)
+		{
+			return indexes.OrderBy(index => index).ToArray();
+		}
+		return candidateCount <= FullCandidateScanLimit
+			? Enumerable.Range(0, candidateCount).ToArray()
+			: Array.Empty<int>();
 	}
 
 	private static List<string> BuildTitleVariants(IEnumerable<string?> values)

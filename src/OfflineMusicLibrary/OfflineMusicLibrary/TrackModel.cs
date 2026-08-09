@@ -100,7 +100,9 @@ public sealed class TrackModel : INotifyPropertyChanged
 	}
 
 	[JsonIgnore]
-	public BitmapSource? CoverThumbnail => CoverService.LoadThumbnail(this);
+	public BitmapSource? CoverThumbnail => LibraryRootCatalog.FastClassify(FilePath) == LibraryRootKinds.Local
+		? CoverService.LoadThumbnail(this)
+		: CoverService.LoadCachedThumbnail(this);
 
 	[JsonIgnore]
 	public string FavoriteGlyph

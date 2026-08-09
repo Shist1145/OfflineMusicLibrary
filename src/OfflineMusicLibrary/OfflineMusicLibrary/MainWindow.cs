@@ -47,11 +47,15 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 
 	private readonly MusicLibraryService _libraryService = new MusicLibraryService();
 
+	private readonly LibraryRootHealthService _rootHealthService = new LibraryRootHealthService();
+
 	private readonly NetEasePlaylistService _netEaseService = new NetEasePlaylistService();
 
 	private readonly PlaybackService _playback = new PlaybackService();
 
 	private readonly GlobalHotkeyService _hotkeys = new GlobalHotkeyService();
+
+	private readonly CancellationTokenSource _lifetimeCancellation = new CancellationTokenSource();
 
 	private readonly DispatcherTimer _playerTimer = new DispatcherTimer
 	{
@@ -151,6 +155,8 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 
 	private long? _pendingSeekMs;
 
+	private string? _pendingSeekTrackId;
+
 	private DateTime? _autoCloseAt;
 
 	private int _albumCardLoadVersion;
@@ -167,7 +173,17 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 
 	private bool _playbackRecoveryInProgress;
 
+	private bool _rootReconnectInProgress;
+
 	private string? _watchdogTrackId;
+
+	private CancellationTokenSource? _rootWaitCancellation;
+
+	private string? _waitingRootId;
+
+	private long _waitingResumePositionMs;
+
+	private int _playTrackRequestVersion;
 
 	private MediaDetails _mediaDetails = new MediaDetails();
 
@@ -263,6 +279,10 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		{
 			_ = base.Dispatcher.BeginInvoke((Action)delegate
 			{
+				if (_rootReconnectInProgress)
+				{
+					return;
+				}
 				if (!_state.PlaybackRecoveryEnabled)
 				{
 					StatusText.Text = "播放引擎报告异常；自动恢复已关闭";
@@ -306,11 +326,12 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 	{
 		await Task.Delay(350);
 		long? pendingSeekMs = _pendingSeekMs;
-		if (pendingSeekMs.HasValue)
+		if (pendingSeekMs.HasValue && string.Equals(_pendingSeekTrackId, _currentTrack?.Id, StringComparison.OrdinalIgnoreCase))
 		{
 			_playback.Seek(pendingSeekMs.GetValueOrDefault());
-			_pendingSeekMs = null;
 		}
+		_pendingSeekMs = null;
+		_pendingSeekTrackId = null;
 		await RefreshMediaControlsAsync();
 	}
 
@@ -320,6 +341,10 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		try
 		{
 			_state = await _store.LoadAsync();
+			PersistentAssetCache.Configure(
+				_store.AssetCacheDirectory,
+				_state.PersistentAssetCacheEnabled,
+				_state.PersistentAssetCacheMaxMegabytes);
 			ApplyUiFont();
 			ApplyPersonalization();
 			try
@@ -367,6 +392,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			ConfigureAutoCloseTimer();
 			_playerTimer.Start();
 			ApplyStartupPlayback();
+			DiagnosticLog.Observe(MonitorLibraryRootsAsync(_lifetimeCancellation.Token), "NAS", "Library root monitor stopped unexpectedly");
 			ApplyStartupWindowState();
 		}
 		catch (Exception ex)
@@ -403,6 +429,8 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			}
 
 			_shuttingDown = true;
+			_lifetimeCancellation.Cancel();
+			CancelRootWait();
 			_scanCancellation?.Cancel();
 			_playerTimer.Stop();
 			_autoCloseTimer.Stop();
@@ -428,6 +456,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		_taskbarHoverPreview = null;
 		_hotkeys.Dispose();
 		_playback.Dispose();
+		_lifetimeCancellation.Dispose();
 		if (_trayIcon != null)
 		{
 			_trayIcon.Visible = false;
@@ -441,6 +470,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		{
 			return;
 		}
+		SynchronizeLibraryRootsFromFolders();
 		if (_state.LibraryFolders.Count == 0)
 		{
 			StatusText.Text = "请先添加音乐文件夹";
@@ -468,8 +498,9 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 				progress,
 				scanCancellation.Token,
 				forceMetadataRefresh);
+			MarkReachableRootsScanned();
 			await _store.SaveAsync(_state);
-			bool confirmedEmptyLibrary = hadIndexedTracks && _state.Tracks.Count == 0 && _state.LibraryFolders.All(Directory.Exists);
+			bool confirmedEmptyLibrary = hadIndexedTracks && _state.Tracks.Count == 0 && AreAllRootsKnownReachable();
 			RefreshNavigation(confirmedEmptyLibrary);
 			if (IsDiscoveryPage)
 			{
@@ -1812,13 +1843,14 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		OpenFolderDialog dialog = new OpenFolderDialog
 		{
 			Title = "选择本地音乐总文件夹",
-			InitialDirectory = (_state.LibraryFolders.FirstOrDefault(Directory.Exists) ?? Environment.GetFolderPath(Environment.SpecialFolder.MyMusic))
+			InitialDirectory = (_state.LibraryRoots.FirstOrDefault(root => LibraryRootHealthStates.IsReachable(root.Health))?.Path ?? Environment.GetFolderPath(Environment.SpecialFolder.MyMusic))
 		};
 		if (dialog.ShowDialog(this) == true)
 		{
 			if (!_state.LibraryFolders.Contains<string>(dialog.FolderName, StringComparer.OrdinalIgnoreCase))
 			{
 				_state.LibraryFolders.Add(dialog.FolderName);
+				SynchronizeLibraryRootsFromFolders();
 			}
 			await ScanLibraryAsync();
 		}
@@ -2349,6 +2381,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 
 	private async Task SyncLibraryBeforeImportAsync()
 	{
+		SynchronizeLibraryRootsFromFolders();
 		if (_state.LibraryFolders.Count == 0)
 		{
 			return;
@@ -2378,8 +2411,9 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 				_state.Tracks,
 				progress,
 				scanCancellation.Token);
+			MarkReachableRootsScanned();
 			await _store.SaveAsync(_state);
-			bool confirmedEmptyLibrary = hadIndexedTracks && _state.Tracks.Count == 0 && _state.LibraryFolders.All(Directory.Exists);
+			bool confirmedEmptyLibrary = hadIndexedTracks && _state.Tracks.Count == 0 && AreAllRootsKnownReachable();
 			RefreshNavigation(confirmedEmptyLibrary);
 			if (!IsAlbumPage && !IsCirclePage)
 			{
@@ -2504,6 +2538,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			_queue = remaining;
 			_queueIndex = currentIndex;
 			RefreshQueueLists();
+			CapturePlaybackSessionAndScheduleSave();
 			StatusText.Text = $"已将 {additions.Count:N0} 首歌曲安排为下一首播放";
 		}
 	}
@@ -2518,6 +2553,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		}
 		_queue.AddRange(additions);
 		RefreshQueueLists();
+		CapturePlaybackSessionAndScheduleSave();
 		StatusText.Text = $"已向播放队列末尾添加 {additions.Count:N0} 首歌曲";
 		return additions.Count;
 	}
@@ -2565,7 +2601,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 
 	private void CopyFilesForSharing(IEnumerable<TrackModel> tracks)
 	{
-		string[] paths = tracks.Select((TrackModel track) => track.FilePath).Where(File.Exists).Distinct<string>(StringComparer.OrdinalIgnoreCase)
+		string[] paths = tracks.Select((TrackModel track) => track.FilePath).Where(path => !string.IsNullOrWhiteSpace(path)).Distinct<string>(StringComparer.OrdinalIgnoreCase)
 			.ToArray();
 		if (paths.Length == 0)
 		{
@@ -2587,13 +2623,50 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 
 	private void OpenTrackFolder(TrackModel? track)
 	{
-		if (track != null && File.Exists(track.FilePath))
+		if (track != null)
 		{
-			Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + track.FilePath + "\"")
-			{
-				UseShellExecute = true
-			});
+			DiagnosticLog.Observe(OpenTrackFolderAsync(track), "NAS", "Could not open the track folder");
 		}
+	}
+
+	private async Task OpenTrackFolderAsync(TrackModel track)
+	{
+		LibraryRootState? root = LibraryRootCatalog.FindOwningRoot(_state.LibraryRoots, track.FilePath);
+		TimeSpan timeout = TimeSpan.FromSeconds(Math.Clamp(root?.ProbeTimeoutSeconds ?? _state.NasProbeTimeoutSeconds, 1, 15));
+		PathAvailabilityResult result = await _rootHealthService.ProbePathAsync(track.FilePath, timeout, _lifetimeCancellation.Token);
+		if (!result.Reachable)
+		{
+			StatusText.Text = result.TimedOut ? "文件夹响应超时，未打开资源管理器" : "歌曲文件当前不可访问";
+			return;
+		}
+		ProcessStartInfo explorer = new("explorer.exe")
+		{
+			UseShellExecute = false
+		};
+		explorer.ArgumentList.Add($"/select,{track.FilePath}");
+		Process.Start(explorer);
+	}
+
+	private async Task<string?> FindSidecarSubtitleAsync(TrackModel track, TimeSpan timeout, CancellationToken cancellationToken)
+	{
+		if (!track.IsVideo)
+		{
+			return null;
+		}
+		string stem = Path.Combine(Path.GetDirectoryName(track.FilePath) ?? "", Path.GetFileNameWithoutExtension(track.FilePath));
+		string[] candidates = [stem + ".ass", stem + ".srt", stem + ".vtt"];
+		Task<PathAvailabilityResult>[] probes = candidates
+			.Select(candidate => _rootHealthService.ProbePathAsync(candidate, timeout, cancellationToken))
+			.ToArray();
+		PathAvailabilityResult[] results = await Task.WhenAll(probes);
+		for (int index = 0; index < candidates.Length; index++)
+		{
+			if (results[index].Reachable)
+			{
+				return candidates[index];
+			}
+		}
+		return null;
 	}
 
 	private void TrackContextPlay_Click(object sender, RoutedEventArgs e)
@@ -3080,28 +3153,92 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 
 	private void PlayTrack(TrackModel track)
 	{
-		if (!File.Exists(track.FilePath))
-		{
-			StatusText.Text = "文件不存在，请重新扫描曲库";
-			return;
-		}
+		CancelRootWait();
+		int requestVersion = Interlocked.Increment(ref _playTrackRequestVersion);
+		DiagnosticLog.Observe(PlayTrackAsync(track, requestVersion), "PLAY", "Could not complete the asynchronous play request");
+	}
+
+	private async Task PlayTrackAsync(TrackModel track, int requestVersion)
+	{
 		if (track.IsEncryptedNcm)
 		{
 			StatusText.Text = "这首歌已在曲库和歌单中，但 NCM 加密文件需要先转换才能播放";
 			System.Windows.MessageBox.Show(this, "该歌曲是网易云 NCM 加密文件。程序会把它计入曲库、搜索结果和导入歌单，但必须先转换为 FLAC、MP3 等普通音频格式才能播放。\n\n转换完成后点击“重新扫描”，歌单导入会优先匹配可播放版本。", "NCM 需要转换", MessageBoxButton.OK, MessageBoxImage.Asterisk);
 			return;
 		}
+
+		LibraryRootState? root = LibraryRootCatalog.FindOwningRoot(_state.LibraryRoots, track.FilePath);
+		TimeSpan timeout = TimeSpan.FromSeconds(Math.Clamp(root?.ProbeTimeoutSeconds ?? _state.NasProbeTimeoutSeconds, 1, 15));
+		if (root != null && (LibraryRootKinds.IsReconnectable(root.RootKind) || root.RootKind == LibraryRootKinds.Unknown))
+		{
+			LibraryRootProbeResult rootResult = await _rootHealthService.ProbeAsync(root, timeout, _lifetimeCancellation.Token);
+			if (requestVersion != Volatile.Read(ref _playTrackRequestVersion) || _shuttingDown)
+			{
+				return;
+			}
+			ApplyRootProbeResult(rootResult);
+			if (!rootResult.Reachable)
+			{
+				if (_state.WaitForOfflineRoots && (LibraryRootKinds.IsReconnectable(root.RootKind) || root.RootKind == LibraryRootKinds.Unknown))
+				{
+					await WaitForRootAndResumeAsync(track, root, Math.Max(0, _pendingSeekMs ?? 0), recoverExistingPlayer: false, requestVersion);
+				}
+				else
+				{
+					StatusText.Text = rootResult.Health == LibraryRootHealthStates.NeedsCredentials
+						? "曲库目录需要 Windows 网络凭据，播放未开始"
+						: "曲库目录当前离线，播放未开始";
+				}
+				return;
+			}
+		}
+
+		PathAvailabilityResult availability = await _rootHealthService.ProbePathAsync(track.FilePath, timeout, _lifetimeCancellation.Token);
+		if (requestVersion != Volatile.Read(ref _playTrackRequestVersion) || _shuttingDown)
+		{
+			return;
+		}
+		if (!availability.Reachable)
+		{
+			StatusText.Text = root != null && LibraryRootHealthStates.IsReachable(root.Health)
+				? "根目录在线，但歌曲文件已移动或不存在；请重新扫描曲库"
+				: "文件不存在或当前不可访问；请检查磁盘后重新扫描";
+			return;
+		}
+
+		string? sidecarSubtitlePath = await FindSidecarSubtitleAsync(track, timeout, _lifetimeCancellation.Token);
+		if (requestVersion != Volatile.Read(ref _playTrackRequestVersion) || _shuttingDown)
+		{
+			return;
+		}
+		StartAvailableTrack(track, _pendingSeekMs, sidecarSubtitlePath);
+	}
+
+	private void StartAvailableTrack(TrackModel track, long? resumeAtMilliseconds = null, string? sidecarSubtitlePath = null)
+	{
 		try
 		{
 			if (_currentTrack != null && !string.Equals(_currentTrack.Id, track.Id, StringComparison.OrdinalIgnoreCase))
 			{
 				RememberCurrentPlayback();
 			}
+			_waitingRootId = null;
+			_waitingResumePositionMs = 0;
+			if (resumeAtMilliseconds.HasValue && resumeAtMilliseconds.Value > 0)
+			{
+				_pendingSeekMs = resumeAtMilliseconds.Value;
+				_pendingSeekTrackId = track.Id;
+			}
+			else
+			{
+				_pendingSeekMs = null;
+				_pendingSeekTrackId = null;
+			}
 			if (_showingPlayerView || track.IsVideo || (!_state.SafePlaybackMode && !string.Equals(_state.VisualizationMode, "Off", StringComparison.OrdinalIgnoreCase)))
 			{
 				ShowPlayerView(showPlayer: true, track);
 			}
-			_playback.Play(track.FilePath, _state, track.IsVideo);
+			_playback.Play(track.FilePath, _state, track.IsVideo, sidecarSubtitlePath);
 			_currentTrack = track;
 			base.Title = track.Title + " - " + track.Artist + " · 本地音乐库";
 			_taskbarHoverPreview?.UpdateTrack(track, null);
@@ -3114,19 +3251,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			_recommendationCache.Clear();
 			RememberRecentlyPlayed(track.Id);
 			int loadVersion = ++_nowPlayingLoadVersion;
-			_lyrics = new List<LyricLine>();
-			_currentLyricIndex = -1;
-			RefreshLyricsLists();
-			InPlayerOriginalText.Text = "";
-			InPlayerTranslationText.Text = "";
-			InPlayerTertiaryText.Text = "";
-			VinylCurrentOriginalText.Text = "";
-			VinylCurrentTranslationText.Text = "";
-			VinylCurrentTertiaryText.Text = "";
-			VinylLyricHintText.Text = "正在读取歌词……";
-			InPlayerSubtitlePanel.Visibility = ((!_state.InPlayerBilingualSubtitles) ? Visibility.Collapsed : Visibility.Visible);
-			ShowTrackInformation(track, updateNowPlaying: true);
-			PlayerMediaSummaryText.Text = $"{track.Title}  ·  {track.MediaTypeText} / {track.Format}";
+			ResetNowPlayingAssets(track);
 			PlayPauseButton.Content = "Ⅱ";
 			ImmersivePlayPauseButton.Content = "Ⅱ";
 			_desktopLyrics?.UpdatePlayState(isPlaying: true);
@@ -3149,6 +3274,156 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		{
 			StatusText.Text = "播放失败";
 			System.Windows.MessageBox.Show(this, ex.Message, "无法播放", MessageBoxButton.OK, MessageBoxImage.Hand);
+		}
+	}
+
+	private void ResetNowPlayingAssets(TrackModel track)
+	{
+		_lyrics = new List<LyricLine>();
+		_currentLyricIndex = -1;
+		RefreshLyricsLists();
+		InPlayerOriginalText.Text = "";
+		InPlayerTranslationText.Text = "";
+		InPlayerTertiaryText.Text = "";
+		VinylCurrentOriginalText.Text = "";
+		VinylCurrentTranslationText.Text = "";
+		VinylCurrentTertiaryText.Text = "";
+		VinylLyricHintText.Text = "正在读取歌词……";
+		InPlayerSubtitlePanel.Visibility = (!_state.InPlayerBilingualSubtitles) ? Visibility.Collapsed : Visibility.Visible;
+		ShowTrackInformation(track, updateNowPlaying: true);
+		PlayerMediaSummaryText.Text = $"{track.Title}  ·  {track.MediaTypeText} / {track.Format}";
+	}
+
+	private async Task WaitForRootAndResumeAsync(
+		TrackModel track,
+		LibraryRootState root,
+		long resumeAtMilliseconds,
+		bool recoverExistingPlayer,
+		int requestVersion)
+	{
+		CancelRootWait();
+		CancellationTokenSource waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token);
+		_rootWaitCancellation = waitCancellation;
+		_rootReconnectInProgress = true;
+		_waitingRootId = root.RootId;
+		_waitingResumePositionMs = Math.Max(0, resumeAtMilliseconds);
+		int attempt = 0;
+		int onlineButMissingCount = 0;
+		try
+		{
+			if (!recoverExistingPlayer)
+			{
+				if (_currentTrack != null && !string.Equals(_currentTrack.Id, track.Id, StringComparison.OrdinalIgnoreCase))
+				{
+					RememberCurrentPlayback();
+				}
+				_playback.Stop();
+				_currentTrack = track;
+				ResetNowPlayingAssets(track);
+				int loadVersion = ++_nowPlayingLoadVersion;
+				DiagnosticLog.Observe(LoadNowPlayingAssetsAsync(track, loadVersion), "ASSET", "Could not load cached assets while waiting for a root");
+			}
+			else
+			{
+				_playback.Stop();
+			}
+			PlayPauseButton.Content = "▶";
+			ImmersivePlayPauseButton.Content = "▶";
+			RememberCurrentPlayback();
+			ScheduleStateSave();
+
+			while (!waitCancellation.IsCancellationRequested && !_shuttingDown)
+			{
+				TimeSpan delay = LibraryRootRetrySchedule.GetDelay(attempt);
+				StatusText.Text = root.Health == LibraryRootHealthStates.NeedsCredentials
+					? $"等待 Windows 恢复 NAS 凭据连接；{delay.TotalSeconds:0} 秒后重试"
+					: $"曲库目录离线，保留队列与 {FormatTime(resumeAtMilliseconds)} 位置；{delay.TotalSeconds:0} 秒后重试";
+				await Task.Delay(delay, waitCancellation.Token);
+				LibraryRootProbeResult result = await _rootHealthService.ProbeAsync(
+					root,
+					TimeSpan.FromSeconds(Math.Clamp(root.ProbeTimeoutSeconds, 1, 15)),
+					waitCancellation.Token);
+				if (requestVersion != Volatile.Read(ref _playTrackRequestVersion))
+				{
+					return;
+				}
+				ApplyRootProbeResult(result);
+				attempt++;
+				if (!result.Reachable)
+				{
+					continue;
+				}
+				PathAvailabilityResult fileResult = await _rootHealthService.ProbePathAsync(
+					track.FilePath,
+					TimeSpan.FromSeconds(Math.Clamp(root.ProbeTimeoutSeconds, 1, 15)),
+					waitCancellation.Token);
+				if (!fileResult.Reachable)
+				{
+					if (fileResult.TimedOut)
+					{
+						continue;
+					}
+					onlineButMissingCount++;
+					if (onlineButMissingCount < 3)
+					{
+						continue;
+					}
+					RememberCurrentPlayback();
+					_waitingRootId = null;
+					_waitingResumePositionMs = 0;
+					_state.PlaybackSession.WaitingRootId = null;
+					StatusText.Text = "NAS 已恢复，但歌曲文件已移动或删除；队列已保留，请重新扫描";
+					return;
+				}
+
+				_waitingRootId = null;
+				_waitingResumePositionMs = 0;
+				string? sidecarSubtitlePath = await FindSidecarSubtitleAsync(
+					track,
+					TimeSpan.FromSeconds(Math.Clamp(root.ProbeTimeoutSeconds, 1, 15)),
+					waitCancellation.Token);
+				if (recoverExistingPlayer)
+				{
+					bool recovered = await _playback.RecoverAsync(track.FilePath, _state, track.IsVideo, Math.Max(0, resumeAtMilliseconds), sidecarSubtitlePath, waitCancellation.Token);
+					StatusText.Text = recovered ? "NAS 已恢复，已从原位置继续播放" : "NAS 已恢复，但播放引擎恢复失败";
+				}
+				else
+				{
+					StartAvailableTrack(track, Math.Max(0, resumeAtMilliseconds), sidecarSubtitlePath);
+					StatusText.Text = "曲库目录已恢复，已从保存位置继续播放";
+				}
+				RememberCurrentPlayback();
+				ScheduleStateSave();
+				return;
+			}
+		}
+		catch (OperationCanceledException)
+		{
+		}
+		finally
+		{
+			if (ReferenceEquals(_rootWaitCancellation, waitCancellation))
+			{
+				_rootWaitCancellation = null;
+				_rootReconnectInProgress = false;
+			}
+			waitCancellation.Dispose();
+		}
+	}
+
+	private void CancelRootWait()
+	{
+		CancellationTokenSource? cancellation = Interlocked.Exchange(ref _rootWaitCancellation, null);
+		try
+		{
+			cancellation?.Cancel();
+		}
+		catch (ObjectDisposedException)
+		{
+		}
+		if (cancellation != null)
+		{
+			_rootReconnectInProgress = false;
 		}
 	}
 
@@ -3208,7 +3483,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		try
 		{
 			Task<BitmapSource?> coverTask = Task.Run(() => CoverService.LoadThumbnail(track, 720));
-			Task<List<LyricLine>> lyricsTask = Task.Run(() => LyricsService.LoadForTrack(track.FilePath));
+			Task<List<LyricLine>> lyricsTask = Task.Run(() => LyricsService.LoadForTrack(track));
 			InlineArray2<Task> buffer = default(InlineArray2<Task>);
 			buffer[0] = coverTask;
 			buffer[1] = lyricsTask;
@@ -3373,6 +3648,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		_state.ShuffleMode = ShuffleService.Modes[(Math.Max(0, current) + 1) % ShuffleService.Modes.Length];
 		_state.ShuffleEnabled = _state.ShuffleMode != "Off";
 		UpdatePlaybackModeButtons();
+		RememberCurrentPlayback();
 		await _store.SaveAsync(_state);
 	}
 
@@ -3383,6 +3659,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			_state.ShuffleMode = mode;
 			_state.ShuffleEnabled = mode != "Off";
 			UpdatePlaybackModeButtons();
+			RememberCurrentPlayback();
 			await _store.SaveAsync(_state);
 		}
 	}
@@ -3394,6 +3671,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		string repeatMode2 = ((repeatMode == "All") ? "One" : ((!(repeatMode == "One")) ? "All" : "Off"));
 		state.RepeatMode = repeatMode2;
 		UpdatePlaybackModeButtons();
+		RememberCurrentPlayback();
 		await _store.SaveAsync(_state);
 	}
 
@@ -3472,7 +3750,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			_watchdogRecoveryResumeAt = -1L;
 		}
 		int timeoutSeconds = PlaybackStabilityService.EffectiveWatchdogTimeoutSeconds(_state, _watchdogRecoveryCount);
-		if (_state.PlaybackRecoveryEnabled && _currentTrack != null && !_playbackRecoveryInProgress && _playback.IsPlaying && (duration <= 0 || duration - current >= 2500) && !(DateTime.UtcNow - _playback.LastProgressUtc < TimeSpan.FromSeconds(timeoutSeconds)))
+		if (_state.PlaybackRecoveryEnabled && _currentTrack != null && !_playbackRecoveryInProgress && !_rootReconnectInProgress && _playback.IsPlaying && (duration <= 0 || duration - current >= 2500) && !(DateTime.UtcNow - _playback.LastProgressUtc < TimeSpan.FromSeconds(timeoutSeconds)))
 		{
 			DiagnosticLog.Observe(RecoverPlaybackAsync($"播放时间超过 {timeoutSeconds} 秒没有前进"), "WATCHDOG", "Playback watchdog recovery task failed");
 		}
@@ -3481,15 +3759,71 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 	private async Task RecoverPlaybackAsync(string reason)
 	{
 		TrackModel track = _currentTrack;
-		if (track == null || _playbackRecoveryInProgress || _shuttingDown)
+		if (track == null || _playbackRecoveryInProgress || _rootReconnectInProgress || _shuttingDown)
 		{
 			return;
 		}
+		int requestVersion = Volatile.Read(ref _playTrackRequestVersion);
 		if (!string.Equals(_watchdogTrackId, track.Id, StringComparison.OrdinalIgnoreCase))
 		{
 			_watchdogTrackId = track.Id;
 			_watchdogRecoveryCount = 0;
 			_watchdogRecoveryResumeAt = -1L;
+		}
+		long resumeAt = Math.Max(0L, _playback.Time);
+		LibraryRootState? root = LibraryRootCatalog.FindOwningRoot(_state.LibraryRoots, track.FilePath);
+		if (root != null && (LibraryRootKinds.IsReconnectable(root.RootKind) || root.RootKind == LibraryRootKinds.Unknown))
+		{
+			_rootReconnectInProgress = true;
+			try
+			{
+				TimeSpan timeout = TimeSpan.FromSeconds(Math.Clamp(root.ProbeTimeoutSeconds, 1, 15));
+				LibraryRootProbeResult rootResult = await _rootHealthService.ProbeAsync(root, timeout, _lifetimeCancellation.Token);
+				if (requestVersion != Volatile.Read(ref _playTrackRequestVersion) || !string.Equals(_currentTrack?.Id, track.Id, StringComparison.OrdinalIgnoreCase))
+				{
+					return;
+				}
+				ApplyRootProbeResult(rootResult);
+				if (!rootResult.Reachable)
+				{
+					if (_state.WaitForOfflineRoots && (LibraryRootKinds.IsReconnectable(root.RootKind) || root.RootKind == LibraryRootKinds.Unknown))
+					{
+						DiagnosticLog.Write("NAS", $"{reason}; root unavailable, entering WaitingForRoot without rebuilding LibVLC");
+						await WaitForRootAndResumeAsync(track, root, resumeAt, recoverExistingPlayer: true, requestVersion);
+					}
+					else
+					{
+						_playback.Stop();
+						StatusText.Text = "曲库目录离线；已停止播放，未重建解码器";
+					}
+					return;
+				}
+				PathAvailabilityResult fileResult = await _rootHealthService.ProbePathAsync(track.FilePath, timeout, _lifetimeCancellation.Token);
+				if (requestVersion != Volatile.Read(ref _playTrackRequestVersion) || !string.Equals(_currentTrack?.Id, track.Id, StringComparison.OrdinalIgnoreCase))
+				{
+					return;
+				}
+				if (!fileResult.Reachable)
+				{
+					if (_state.WaitForOfflineRoots && fileResult.TimedOut)
+					{
+						await WaitForRootAndResumeAsync(track, root, resumeAt, recoverExistingPlayer: true, requestVersion);
+					}
+					else
+					{
+						_playback.Stop();
+						StatusText.Text = "根目录在线，但当前歌曲文件不存在；未重建解码器";
+					}
+					return;
+				}
+			}
+			finally
+			{
+				if (_rootWaitCancellation == null)
+				{
+					_rootReconnectInProgress = false;
+				}
+			}
 		}
 		int maximumAttempts = Math.Clamp(_state.PlaybackRecoveryAttempts, 1, 5);
 		if (_watchdogRecoveryCount >= maximumAttempts)
@@ -3509,13 +3843,24 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		}
 		_playbackRecoveryInProgress = true;
 		_watchdogRecoveryCount++;
-		long resumeAt = Math.Max(0L, _playback.Time);
 		_watchdogRecoveryResumeAt = resumeAt;
 		StatusText.Text = $"检测到播放停滞，正在恢复（{_watchdogRecoveryCount}/{maximumAttempts}）……";
 		DiagnosticLog.Write("WATCHDOG", $"{reason}; track='{track.FilePath}', time={resumeAt}");
 		try
 		{
-			bool recovered = await _playback.RecoverAsync(track.FilePath, _state, track.IsVideo, resumeAt);
+			if (requestVersion != Volatile.Read(ref _playTrackRequestVersion) || !string.Equals(_currentTrack?.Id, track.Id, StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+			string? sidecarSubtitlePath = await FindSidecarSubtitleAsync(
+				track,
+				TimeSpan.FromSeconds(Math.Clamp(root?.ProbeTimeoutSeconds ?? _state.NasProbeTimeoutSeconds, 1, 15)),
+				_lifetimeCancellation.Token);
+			if (requestVersion != Volatile.Read(ref _playTrackRequestVersion) || !string.Equals(_currentTrack?.Id, track.Id, StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+			bool recovered = await _playback.RecoverAsync(track.FilePath, _state, track.IsVideo, resumeAt, sidecarSubtitlePath);
 			if (string.Equals(_currentTrack?.Id, track.Id, StringComparison.OrdinalIgnoreCase))
 			{
 				StatusText.Text = (recovered ? "播放已自动恢复并从原位置继续" : "播放恢复失败；界面仍可操作，将再次尝试");
@@ -3539,6 +3884,12 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 	{
 		_stateSaveTimer.Stop();
 		_stateSaveTimer.Start();
+	}
+
+	private void CapturePlaybackSessionAndScheduleSave()
+	{
+		RememberCurrentPlayback();
+		ScheduleStateSave();
 	}
 
 	private async void StateSaveTimer_Tick(object? sender, EventArgs e)
@@ -4681,35 +5032,150 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 		}
 	}
 
+	private async Task MonitorLibraryRootsAsync(CancellationToken cancellationToken)
+	{
+		while (!cancellationToken.IsCancellationRequested)
+		{
+			try
+			{
+				LibraryRootState[] roots = _state.LibraryRoots.ToArray();
+				if (roots.Length == 0)
+				{
+					await Task.Delay(TimeSpan.FromMinutes(1), cancellationToken);
+					continue;
+				}
+				foreach (LibraryRootState root in roots)
+				{
+					if (root.Health == LibraryRootHealthStates.Unknown)
+					{
+						root.Health = LibraryRootHealthStates.Checking;
+					}
+				}
+				IReadOnlyList<LibraryRootProbeResult> results = await _rootHealthService.ProbeManyAsync(roots, 2, cancellationToken);
+				bool changed = false;
+				foreach (LibraryRootProbeResult result in results)
+				{
+					changed |= ApplyRootProbeResult(result);
+				}
+				if (changed)
+				{
+					ScheduleStateSave();
+				}
+				bool anyUnavailable = _state.LibraryRoots.Any(root => !LibraryRootHealthStates.IsReachable(root.Health));
+				await Task.Delay(anyUnavailable ? TimeSpan.FromSeconds(30) : TimeSpan.FromMinutes(1), cancellationToken);
+			}
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+			{
+				return;
+			}
+			catch (Exception ex)
+			{
+				DiagnosticLog.Write("NAS", "Library root health probe failed; monitoring will continue", ex);
+				await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+			}
+		}
+	}
+
+	private bool ApplyRootProbeResult(LibraryRootProbeResult result)
+	{
+		LibraryRootState? root = _state.LibraryRoots.FirstOrDefault(item => string.Equals(item.RootId, result.RootId, StringComparison.OrdinalIgnoreCase));
+		if (root == null)
+		{
+			return false;
+		}
+		bool changed = !string.Equals(root.Health, result.Health, StringComparison.Ordinal) ||
+			!string.Equals(root.RootKind, result.RootKind, StringComparison.Ordinal) ||
+			!string.Equals(root.LastError, result.Error ?? "", StringComparison.Ordinal);
+		root.ApplyProbeResult(result);
+		if (changed)
+		{
+			DiagnosticLog.Write("NAS", $"Root '{root.Path}' is now {root.Health} ({root.LastLatencyMs ?? 0} ms): {root.LastError}");
+		}
+		return changed;
+	}
+
+	private void SynchronizeLibraryRootsFromFolders()
+	{
+		_state.LibraryRoots = LibraryRootCatalog.Synchronize(_state.LibraryFolders, _state.LibraryRoots);
+		foreach (LibraryRootState root in _state.LibraryRoots)
+		{
+			root.ProbeTimeoutSeconds = Math.Clamp(_state.NasProbeTimeoutSeconds, 1, 15);
+		}
+		_state.LibraryFolders = _state.LibraryRoots.Select(root => root.Path).ToList();
+	}
+
+	private bool AreAllRootsKnownReachable()
+	{
+		return _state.LibraryRoots.Count > 0 && _state.LibraryRoots.All(root => LibraryRootHealthStates.IsReachable(root.Health));
+	}
+
+	private void MarkReachableRootsScanned()
+	{
+		DateTime now = DateTime.UtcNow;
+		foreach (LibraryRootState root in _state.LibraryRoots.Where(root => LibraryRootHealthStates.IsReachable(root.Health)))
+		{
+			root.LastSuccessfulScanUtc = now;
+		}
+	}
+
 	private void ApplyStartupPlayback()
 	{
-		if (_startupPlaybackApplied || !_state.AutoPlayOnStartup)
+		if (_startupPlaybackApplied)
 		{
 			return;
 		}
 		_startupPlaybackApplied = true;
-		TrackModel track = _state.Tracks.FirstOrDefault((TrackModel item) => string.Equals(item.Id, _state.LastTrackId, StringComparison.OrdinalIgnoreCase) && !item.IsEncryptedNcm) ?? _state.Tracks.FirstOrDefault((TrackModel item) => !item.IsEncryptedNcm);
+		RestoredPlaybackSession restored = PlaybackSessionService.Restore(_state);
+		_queue = restored.Queue.ToList();
+		_queueIndex = _queue.Count == 0 ? -1 : Math.Clamp(restored.CurrentIndex, 0, _queue.Count - 1);
+		_recentTrackIds.Clear();
+		foreach (string trackId in restored.RecentShuffleIds.TakeLast(25))
+		{
+			_recentTrackIds.Enqueue(trackId);
+		}
+		if (_queue.Count > 0)
+		{
+			RefreshQueueLists();
+			QueueList.SelectedItem = _queue[_queueIndex];
+			ImmersiveQueueList.SelectedItem = _queue[_queueIndex];
+		}
+		if (!_state.AutoPlayOnStartup)
+		{
+			return;
+		}
+		TrackModel? track = _queueIndex >= 0 && _queueIndex < _queue.Count && !_queue[_queueIndex].IsEncryptedNcm
+			? _queue[_queueIndex]
+			: _state.Tracks.FirstOrDefault(item => string.Equals(item.Id, _state.LastTrackId, StringComparison.OrdinalIgnoreCase) && !item.IsEncryptedNcm)
+				?? _state.Tracks.FirstOrDefault(item => !item.IsEncryptedNcm);
 		if (track != null)
 		{
-			_pendingSeekMs = ((_state.RememberPlaybackProgress && string.Equals(track.Id, _state.LastTrackId, StringComparison.OrdinalIgnoreCase)) ? new long?(Math.Max(0L, _state.LastPlaybackPositionMs)) : ((long?)null));
-			if (_visibleTracks.Any((TrackModel item) => string.Equals(item.Id, track.Id, StringComparison.OrdinalIgnoreCase)))
+			if (_queue.Count == 0)
 			{
-				PlayFromVisibleTracks(track);
+				_queue = new List<TrackModel> { track };
+				_queueIndex = 0;
+				RefreshQueueLists();
 			}
-			else
-			{
-				PlayTracks(new[] { track });
-			}
+			_pendingSeekMs = _state.RememberPlaybackProgress ? Math.Max(0, restored.PositionMs) : null;
+			_pendingSeekTrackId = _pendingSeekMs.HasValue ? track.Id : null;
+			PlayTrack(track);
 		}
 	}
 
 	private void RememberCurrentPlayback()
 	{
-		if (_currentTrack != null)
-		{
-			_state.LastTrackId = _currentTrack.Id;
-			_state.LastPlaybackPositionMs = (_state.RememberPlaybackProgress ? Math.Max(0L, _playback.Time) : 0);
-		}
+		long position = _waitingRootId != null
+			? Math.Max(0, _waitingResumePositionMs)
+			: _currentTrack == null
+			? Math.Max(0, _state.PlaybackSession?.PositionMs ?? 0)
+			: Math.Max(0, _playback.Time);
+		PlaybackSessionService.Capture(
+			_state,
+			_queue,
+			_queueIndex,
+			_currentTrack,
+			position,
+			_recentTrackIds,
+			_waitingRootId);
 	}
 
 	private void ShowSettings()
@@ -4728,6 +5194,11 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 			string previousVideoOutput = _state.VideoOutput;
 			bool previousSafePlaybackMode = _state.SafePlaybackMode;
 			dialog.ApplyTo(_state);
+			SynchronizeLibraryRootsFromFolders();
+			PersistentAssetCache.Configure(
+				_store.AssetCacheDirectory,
+				_state.PersistentAssetCacheEnabled,
+				_state.PersistentAssetCacheMaxMegabytes);
 			ApplyUiFont();
 			ApplyPersonalization();
 			ApplyImmersivePerformanceProfile();
@@ -5150,13 +5621,7 @@ public partial class MainWindow : Window, IComponentConnector, IStyleConnector
 
 	private void OpenCurrentFolderButton_Click(object sender, RoutedEventArgs e)
 	{
-		if (_currentTrack != null && File.Exists(_currentTrack.FilePath))
-		{
-			Process.Start(new ProcessStartInfo("explorer.exe", "/select,\"" + _currentTrack.FilePath + "\"")
-			{
-				UseShellExecute = true
-			});
-		}
+		OpenTrackFolder(_currentTrack);
 	}
 
 	private static string FormatTime(long milliseconds)

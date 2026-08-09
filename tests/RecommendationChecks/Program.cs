@@ -109,6 +109,7 @@ Assert(RecommendationService.Create(blankProfile, RecommendationPreset.FavoriteE
 
 string historyJsonPath = Path.Combine(Path.GetTempPath(), $"offline-music-history-{Guid.NewGuid():N}.json");
 string historyCsvPath = Path.Combine(Path.GetTempPath(), $"offline-music-history-{Guid.NewGuid():N}.csv");
+string historyOversizedPath = Path.Combine(Path.GetTempPath(), $"offline-music-history-{Guid.NewGuid():N}.json");
 try
 {
 	List<TrackModel> historyLibrary =
@@ -144,6 +145,20 @@ try
 
 	await File.WriteAllTextAsync(historyCsvPath, "歌名,歌手,专辑,播放次数,最近播放\n\"Comma, Song\",CSV Artist,CSV Album,7,2026-07-18 12:00:00");
 	NetEaseHistoryImportResult csvHistoryImport = await NetEaseHistoryImportService.ImportAsync(historyCsvPath, historyLibrary);
+	await using (FileStream oversizedHistory = new(historyOversizedPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+	{
+		oversizedHistory.SetLength(64L * 1024L * 1024L + 1L);
+	}
+	bool oversizedHistoryRejected = false;
+	try
+	{
+		_ = await NetEaseHistoryImportService.ImportAsync(historyOversizedPath, historyLibrary);
+	}
+	catch (InvalidDataException)
+	{
+		oversizedHistoryRejected = true;
+	}
+	Assert(oversizedHistoryRejected, "超大播放历史文件必须在完整读入内存前被拒绝。");
 	Assert(csvHistoryImport.MatchedRecordCount == 1 && historyLibrary[2].PlayCount == 7, "CSV 导入应正确处理带逗号的引号字段");
 	Assert(historyLibrary[2].LastPlayedAt.HasValue, "CSV 中的最近播放时间应写入本地历史");
 }
@@ -153,6 +168,8 @@ finally
 		File.Delete(historyJsonPath);
 	if (File.Exists(historyCsvPath))
 		File.Delete(historyCsvPath);
+	if (File.Exists(historyOversizedPath))
+		File.Delete(historyOversizedPath);
 }
 
 Console.WriteLine("Recommendation and NetEase history checks passed.");

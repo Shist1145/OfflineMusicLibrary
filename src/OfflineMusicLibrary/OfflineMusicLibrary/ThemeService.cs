@@ -40,7 +40,7 @@ internal static class ThemeService
 	public static void Apply(AppState state)
 	{
 		Palette palette = ResolvePalette(state);
-		bool hasBackground = !string.IsNullOrWhiteSpace(state.BackgroundImagePath) && File.Exists(state.BackgroundImagePath);
+		bool hasBackground = IsUsableBackgroundPath(state.BackgroundImagePath);
 		double opacity = hasBackground ? Math.Clamp(state.UiSurfaceOpacity, 0.72, 1.0) : 1.0;
 
 		SetBrush("AppBackgroundBrush", palette.Background, opacity);
@@ -68,25 +68,17 @@ internal static class ThemeService
 
 	public static Brush CreateWindowBackground(AppState state)
 	{
-		if (!string.IsNullOrWhiteSpace(state.BackgroundImagePath) && File.Exists(state.BackgroundImagePath))
+		if (IsUsableBackgroundPath(state.BackgroundImagePath))
 		{
-			try
+			BitmapSource? bitmap = CoverService.LoadImageFile(state.BackgroundImagePath, 1600);
+			if (bitmap != null)
 			{
-				BitmapImage bitmap = new();
-				bitmap.BeginInit();
-				bitmap.CacheOption = BitmapCacheOption.OnLoad;
-				bitmap.UriSource = new Uri(state.BackgroundImagePath, UriKind.Absolute);
-				bitmap.EndInit();
-				bitmap.Freeze();
 				return new ImageBrush(bitmap)
 				{
 					Stretch = Stretch.UniformToFill,
 					AlignmentX = AlignmentX.Center,
 					AlignmentY = AlignmentY.Center
 				};
-			}
-			catch
-			{
 			}
 		}
 
@@ -154,6 +146,23 @@ internal static class ThemeService
 			(byte)Math.Round(foreground.R * foregroundAmount + background.R * backgroundAmount),
 			(byte)Math.Round(foreground.G * foregroundAmount + background.G * backgroundAmount),
 			(byte)Math.Round(foreground.B * foregroundAmount + background.B * backgroundAmount));
+	}
+
+	private static bool IsUsableBackgroundPath(string? path)
+	{
+		if (string.IsNullOrWhiteSpace(path))
+		{
+			return false;
+		}
+		try
+		{
+			FileInfo info = new(path);
+			return info.Exists && info.Length is > 0 and <= ContentReadLimits.ArtworkBytes;
+		}
+		catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+		{
+			return false;
+		}
 	}
 
 	private static string ToHex(Color color) => $"#{color.R:X2}{color.G:X2}{color.B:X2}";

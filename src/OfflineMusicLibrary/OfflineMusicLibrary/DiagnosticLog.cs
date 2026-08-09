@@ -9,6 +9,7 @@ namespace OfflineMusicLibrary;
 public static class DiagnosticLog
 {
 	private const long MaximumLogBytes = 2097152L;
+	private const int MaximumEntryCharacters = 64 * 1024;
 
 	private static readonly Channel<string> Entries;
 
@@ -31,8 +32,14 @@ public static class DiagnosticLog
 
 	public static void Write(string category, string message, Exception? exception = null)
 	{
-		string detail = ((exception == null) ? "" : $" | {exception.GetType().Name}: {exception.Message}{Environment.NewLine}{exception.StackTrace}");
-		Entries.Writer.TryWrite($"{DateTimeOffset.Now:O} [{category}] {message}{detail}{Environment.NewLine}");
+		string safeCategory = Truncate(category ?? "", 96);
+		string safeMessage = Truncate(message ?? "", 16 * 1024);
+		string detail = exception == null
+			? ""
+			: $" | {exception.GetType().Name}: {Truncate(exception.Message ?? "", 8 * 1024)}" +
+				$"{Environment.NewLine}{Truncate(exception.StackTrace ?? "", 32 * 1024)}";
+		string entry = $"{DateTimeOffset.Now:O} [{safeCategory}] {safeMessage}{detail}{Environment.NewLine}";
+		Entries.Writer.TryWrite(Truncate(entry, MaximumEntryCharacters));
 	}
 
 	public static void Observe(Task task, string category, string message)
@@ -62,5 +69,10 @@ public static class DiagnosticLog
 			{
 			}
 		}
+	}
+
+	private static string Truncate(string value, int maximumCharacters)
+	{
+		return value.Length <= maximumCharacters ? value : value[..maximumCharacters] + "…";
 	}
 }

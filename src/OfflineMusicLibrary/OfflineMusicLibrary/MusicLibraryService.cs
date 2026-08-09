@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -39,12 +40,28 @@ public sealed class MusicLibraryService
 		bool forceMetadataRefresh = false)
 	{
 		List<string> configuredRoots = NormalizeRoots(roots);
-		List<string> availableRoots = configuredRoots.Where(Directory.Exists).ToList();
-		List<string> protectedLocations = configuredRoots.Where((string root) => !Directory.Exists(root)).ToList();
-		List<string> files = await Task.Run(() => availableRoots
-			.SelectMany((string root) => EnumerateMediaFiles(root, protectedLocations, cancellationToken))
-			.Distinct<string>(StringComparer.OrdinalIgnoreCase)
-			.ToList(), cancellationToken);
+		(List<string> availableRoots, List<string> protectedLocations, List<string> files, int scanParallelism) = await Task.Run(() =>
+		{
+			List<string> available = new();
+			List<string> protectedRoots = new();
+			foreach (string root in configuredRoots)
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+				if (Directory.Exists(root))
+				{
+					available.Add(root);
+				}
+				else
+				{
+					protectedRoots.Add(root);
+				}
+			}
+			List<string> discovered = available
+				.SelectMany(root => EnumerateMediaFiles(root, protectedRoots, cancellationToken))
+				.Distinct(StringComparer.OrdinalIgnoreCase)
+				.ToList();
+			return (available, protectedRoots, discovered, ResolveScanParallelism(available));
+		}, cancellationToken).ConfigureAwait(false);
 		cancellationToken.ThrowIfCancellationRequested();
 		Dictionary<string, TrackModel> existingById = existing.Where((TrackModel track) => !string.IsNullOrWhiteSpace(track.Id)).GroupBy<TrackModel, string>((TrackModel track) => track.Id, StringComparer.OrdinalIgnoreCase).ToDictionary<IGrouping<string, TrackModel>, string, TrackModel>((IGrouping<string, TrackModel> group) => group.Key, (IGrouping<string, TrackModel> group) => group.First(), StringComparer.OrdinalIgnoreCase);
 		ConcurrentBag<TrackModel> tracks = new ConcurrentBag<TrackModel>();
@@ -56,7 +73,7 @@ public sealed class MusicLibraryService
 		int added = 0;
 		await Parallel.ForEachAsync(files, new ParallelOptions
 		{
-			MaxDegreeOfParallelism = ResolveScanParallelism(availableRoots),
+			MaxDegreeOfParallelism = scanParallelism,
 			CancellationToken = cancellationToken
 		}, delegate(string path, CancellationToken token)
 		{
@@ -131,7 +148,7 @@ public sealed class MusicLibraryService
 		{
 			DiagnosticLog.Write("LibraryScan", $"Preserved {preserved} existing tracks because {protectedLocations.Count} configured or nested locations were unavailable.");
 		}
-		DiagnosticLog.Write("LibraryScan", $"Incremental scan completed: files={files.Count}, reused={reused}, refreshed={refreshed}, added={added}, fallbacks={errors}, parallelism={ResolveScanParallelism(availableRoots)}.");
+		DiagnosticLog.Write("LibraryScan", $"Incremental scan completed: files={files.Count}, reused={reused}, refreshed={refreshed}, added={added}, fallbacks={errors}, parallelism={scanParallelism}.");
 		return list.OrderBy<TrackModel, string>((TrackModel track) => track.Artist, StringComparer.CurrentCultureIgnoreCase).ThenBy<TrackModel, string>((TrackModel track) => track.Album, StringComparer.CurrentCultureIgnoreCase).ThenBy((TrackModel track) => track.TrackNumber)
 			.ThenBy<TrackModel, string>((TrackModel track) => track.Title, StringComparer.CurrentCultureIgnoreCase)
 			.ToList();
@@ -665,11 +682,24 @@ public sealed class MusicLibraryService
 		CancellationToken cancellationToken = default)
 	{
 		Stack<string> pending = new Stack<string>();
+		HashSet<string> visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		pending.Push(root);
 		while (pending.Count > 0)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			string directory = pending.Pop();
+			string directory;
+			try
+			{
+				directory = Path.GetFullPath(pending.Pop());
+			}
+			catch (Exception ex) when (IsExpectedEnumerationException(ex))
+			{
+				continue;
+			}
+			if (!visited.Add(directory))
+			{
+				continue;
+			}
 			string[] childDirectories;
 			string[] files;
 			try
@@ -677,7 +707,7 @@ public sealed class MusicLibraryService
 				childDirectories = Directory.GetDirectories(directory);
 				files = Directory.GetFiles(directory);
 			}
-			catch (Exception ex) when (((ex is UnauthorizedAccessException || ex is IOException) ? 1 : 0) != 0)
+			catch (Exception ex) when (IsExpectedEnumerationException(ex))
 			{
 				failedDirectories?.Add(directory);
 				DiagnosticLog.Write("LibraryScan", "无法枚举目录：" + directory, ex);
@@ -689,19 +719,55 @@ public sealed class MusicLibraryService
 				cancellationToken.ThrowIfCancellationRequested();
 				if (!SkippedDirectories.Contains(Path.GetFileName(child)))
 				{
-					pending.Push(child);
+					try
+					{
+						if ((System.IO.File.GetAttributes(child) & FileAttributes.ReparsePoint) == 0)
+						{
+							pending.Push(child);
+						}
+						else
+						{
+							failedDirectories?.Add(child);
+						}
+					}
+					catch (Exception ex) when (IsExpectedEnumerationException(ex))
+					{
+						failedDirectories?.Add(child);
+					}
 				}
 			}
 			string[] array2 = files;
 			foreach (string file in array2)
 			{
 				cancellationToken.ThrowIfCancellationRequested();
-				if (SupportedExtensions.Contains(Path.GetExtension(file)))
+				if (SupportedExtensions.Contains(Path.GetExtension(file)) && !IsReparsePoint(file))
 				{
 					yield return file;
 				}
+				else if (SupportedExtensions.Contains(Path.GetExtension(file)))
+				{
+					failedDirectories?.Add(file);
+				}
 			}
 		}
+	}
+
+	private static bool IsReparsePoint(string path)
+	{
+		try
+		{
+			return (System.IO.File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+		}
+		catch (Exception ex) when (IsExpectedEnumerationException(ex))
+		{
+			return true;
+		}
+	}
+
+	private static bool IsExpectedEnumerationException(Exception exception)
+	{
+		return exception is IOException or UnauthorizedAccessException or NotSupportedException or
+			SecurityException or ArgumentException;
 	}
 
 	public static string CreateTrackId(string path)
