@@ -598,7 +598,7 @@
                     </Border>
                   </Grid>
                   <StackPanel Grid.Row="1" Margin="0,12,0,10">
-                    <TextBlock Text="很久没听" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="很久没听" Foreground="#2F2634" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock Text="从收藏与听过的歌里，捞回已经沉底的熟悉声音。" Foreground="#66596E" TextWrapping="Wrap" FontSize="12" LineHeight="18" Margin="0,5,0,0" />
                     <TextBlock Name="RediscoverCardCountText" Text="正在生成…" Foreground="#76518F" FontSize="11" Margin="0,7,0,0" />
                   </StackPanel>
@@ -624,7 +624,7 @@
                     </Border>
                   </Grid>
                   <StackPanel Grid.Row="1" Margin="0,12,0,10">
-                    <TextBlock Text="从未播放" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="从未播放" Foreground="#24333B" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock Text="只看零播放歌曲，并过滤掉无法解释的陌生候选。" Foreground="#536873" TextWrapping="Wrap" FontSize="12" LineHeight="18" Margin="0,5,0,0" />
                     <TextBlock Name="UnplayedCardCountText" Text="正在生成…" Foreground="#3F708C" FontSize="11" Margin="0,7,0,0" />
                   </StackPanel>
@@ -650,7 +650,7 @@
                     </Border>
                   </Grid>
                   <StackPanel Grid.Row="1" Margin="0,12,0,10">
-                    <TextBlock Text="收藏延伸" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="收藏延伸" Foreground="#293526" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock Text="离开收藏夹一小步，只挑能和收藏建立联系的歌。" Foreground="#5D6D52" TextWrapping="Wrap" FontSize="12" LineHeight="18" Margin="0,5,0,0" />
                     <TextBlock Name="ExpansionCardCountText" Text="正在生成…" Foreground="#55793D" FontSize="11" Margin="0,7,0,0" />
                   </StackPanel>
@@ -676,7 +676,7 @@
                     </Border>
                   </Grid>
                   <StackPanel Grid.Row="1" Margin="0,12,0,10">
-                    <TextBlock Text="30 分钟电台" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="30 分钟电台" Foreground="#3B2E26" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock Text="熟悉作品打底，每五首最多穿插一首安全新歌。" Foreground="#735F50" TextWrapping="Wrap" FontSize="12" LineHeight="18" Margin="0,5,0,0" />
                     <TextBlock Name="RadioCardCountText" Text="正在生成…" Foreground="#9A623E" FontSize="11" Margin="0,7,0,0" />
                   </StackPanel>
@@ -716,7 +716,7 @@
                     </Border>
                   </Grid>
                   <StackPanel Grid.Row="1" Margin="0,14,0,12">
-                    <TextBlock Text="私人雷达" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="私人雷达" Foreground="#263746" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock Text="从收藏与常听出发，找出相近却被你错过的声音。" Foreground="#516475" TextWrapping="Wrap" FontSize="12" LineHeight="19" Margin="0,6,0,0" />
                     <TextBlock Name="RadarCardCountText" Text="正在生成…" Foreground="#356A9A" FontSize="11" Margin="0,9,0,0" />
                   </StackPanel>
@@ -748,7 +748,7 @@
                     </Border>
                   </Grid>
                   <StackPanel Grid.Row="1" Margin="0,14,0,12">
-                    <TextBlock Text="每日推荐" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="每日推荐" Foreground="#3E2E27" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock Text="熟悉与新鲜各占一半，一份每天自然更新的本地歌单。" Foreground="#705E52" TextWrapping="Wrap" FontSize="12" LineHeight="19" Margin="0,6,0,0" />
                     <TextBlock Name="DailyCardCountText" Text="正在生成…" Foreground="#A85F3F" FontSize="11" Margin="0,9,0,0" />
                   </StackPanel>
@@ -780,7 +780,7 @@
                     </Border>
                   </Grid>
                   <StackPanel Grid.Row="1" Margin="0,14,0,12">
-                    <TextBlock Text="私人漫游" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="私人漫游" Foreground="#26382F" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock Text="跨过艺术家、专辑和分类边界，去一条不重复的路线。" Foreground="#50685F" TextWrapping="Wrap" FontSize="12" LineHeight="19" Margin="0,6,0,0" />
                     <TextBlock Name="RoamCardCountText" Text="正在生成…" Foreground="#2C7960" FontSize="11" Margin="0,9,0,0" />
                   </StackPanel>

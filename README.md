@@ -7,13 +7,33 @@
 [![Build and regression checks](https://github.com/Shist1145/OfflineMusicLibrary/actions/workflows/release.yml/badge.svg)](https://github.com/Shist1145/OfflineMusicLibrary/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/Shist1145/OfflineMusicLibrary?display_name=tag)](https://github.com/Shist1145/OfflineMusicLibrary/releases/latest)
 
-把音乐留在本地，把控制权还给你。
+**把音乐留在本地，把控制权还给你。**
 
-OfflineMusicLibrary 是一个以本地文件为准的离线音乐管理与播放工具。曲库索引、歌单、收藏、播放记录、歌词样式和播放器设置都保存在本机；应用不会要求登录音乐账号，也不会把个人曲库上传到服务器。
+OfflineMusicLibrary 是一款面向 Windows 本地曲库、NAS 与多语歌词的离线音乐播放器：以你的文件为准，不要求登录，不上传个人曲库。
+
+<p align="center">
+  <a href="https://github.com/Shist1145/OfflineMusicLibrary/releases/latest"><strong>下载最新版本</strong></a>
+  ·
+  <a href="https://github.com/Shist1145/OfflineMusicLibrary/issues">反馈问题</a>
+</p>
+
+![OfflineMusicLibrary 薄荷青推荐主页](docs/images/mint-discover.png)
+
+### 为什么值得试
+
+- **本地优先，也认真对待 NAS。** 网络目录断线时保留曲库、队列和播放位置；探测、缓存和恢复都有明确上限。
+- **网易云歌单只负责映射。** 导入公开歌单与历史记录，严格区分原版和 Off Vocal，在本地做一对一匹配，不下载或替换你的音乐文件。
+- **三轨歌词与细致样式。** 原文、音译、翻译可独立调色和调透明度，并支持描边颜色、描边粗细、桌面歌词与播放器内复用。
+
+| 专辑与本地封面 | 三轨歌词样式 |
+| --- | --- |
+| ![OfflineMusicLibrary 薄荷青专辑页](docs/images/mint-albums.png) | ![OfflineMusicLibrary 歌词样式设置](docs/images/mint-lyrics-settings.png) |
+
+宣传截图统一使用浅色 **Mint / 薄荷青** 主题；Dark 主题另有自动对比度回归和[离屏可读性验收图](docs/images/dark-theme-controls-proof.png)，不再用坏掉的深色界面充当展示图。
+
+OfflineMusicLibrary is a local-first Windows music manager and player for local files, NAS libraries, NetEase playlist mapping, and three-track lyrics. It requires no music-account login and does not upload your library.
 
 > **1.7.0-preview.1 是 Windows x64 预览版。** 它在 1.6.3 稳定版之上加入 NAS Foundation、安全边界和新的稳定性保护；真实 NAS 休眠/唤醒、凭据失效、DAC 与 HDMI 功放仍需更多实机验收。已发布的 Linux/macOS 安装包仍是 [v1.4.0 跨平台预览版](https://github.com/Shist1145/OfflineMusicLibrary/releases/tag/v1.4.0)。
-
-OfflineMusicLibrary is a local-first music manager and player. Version 1.7.0-preview.1 is a Windows x64 preview focused on NAS resilience, bounded resource use, and safer local caching. The latest stable Windows release remains v1.6.3; published Linux/macOS packages remain v1.4.0 previews.
 
 ## 1.7.0-preview.1：NAS Foundation 与安全加固
 

@@ -64,6 +64,27 @@ internal static class ThemeService
 		SetBrush("SecondarySurfaceBrush", palette.Control, opacity);
 		SetBrush("CoverFallbackBrush", palette.CoverFallback, opacity);
 		SetBrush("CoverGlyphBrush", palette.CoverGlyph, 1.0);
+
+		// WPF's built-in ComboBox, TabItem, menu and selection templates still
+		// consume SystemColors resources. Override those at application scope so
+		// a dark palette cannot fall back to white fields or black labels.
+		SetBrush(SystemColors.WindowBrushKey, palette.Control, opacity);
+		SetBrush(SystemColors.WindowTextBrushKey, palette.Text, 1.0);
+		SetBrush(SystemColors.ControlBrushKey, palette.Control, opacity);
+		SetBrush(SystemColors.ControlTextBrushKey, palette.Text, 1.0);
+		SetBrush(SystemColors.ControlLightBrushKey, palette.ControlHover, 1.0);
+		SetBrush(SystemColors.ControlLightLightBrushKey, palette.Surface, 1.0);
+		SetBrush(SystemColors.ControlDarkBrushKey, palette.Line, 1.0);
+		SetBrush(SystemColors.ControlDarkDarkBrushKey, palette.Muted, 1.0);
+		SetBrush(SystemColors.GrayTextBrushKey, palette.Muted, 1.0);
+		SetBrush(SystemColors.HighlightBrushKey, palette.Selection, 1.0);
+		SetBrush(SystemColors.HighlightTextBrushKey, palette.Text, 1.0);
+		SetBrush(SystemColors.HotTrackBrushKey, palette.Accent, 1.0);
+		SetBrush(SystemColors.MenuBrushKey, palette.Surface, opacity);
+		SetBrush(SystemColors.MenuBarBrushKey, palette.Surface, opacity);
+		SetBrush(SystemColors.MenuHighlightBrushKey, palette.Selection, 1.0);
+		SetBrush(SystemColors.MenuTextBrushKey, palette.Text, 1.0);
+		SetBrush(SystemColors.WindowFrameBrushKey, palette.Line, 1.0);
 	}
 
 	public static Brush CreateWindowBackground(AppState state)
@@ -108,6 +129,11 @@ internal static class ThemeService
 	}
 
 	private static void SetBrush(string key, string hex, double opacity)
+	{
+		SetBrush((object)key, hex, opacity);
+	}
+
+	private static void SetBrush(object key, string hex, double opacity)
 	{
 		Color color = ParseColor(hex, Colors.Transparent);
 		color.A = (byte)Math.Round(Math.Clamp(opacity, 0.0, 1.0) * 255.0);
